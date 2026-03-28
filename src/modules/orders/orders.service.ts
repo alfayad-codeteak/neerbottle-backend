@@ -8,70 +8,38 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { STATUS_FLOW, OrderStatus } from './orders.constants';
+import { nextDeliveryStatus } from './delivery.constants';
 import { DepositsService } from '../deposits/deposits.service';
+import { OrdersGateway } from './orders.gateway';
+
+const orderFullInclude = {
+  items: { include: { product: true } },
+  address: true,
+  user: { select: { id: true, phone: true, name: true } },
+  deliveryPartner: { select: { id: true, userId: true, name: true, phone: true } },
+} as const;
 
 @Injectable()
 export class OrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly depositsService: DepositsService,
+    private readonly ordersGateway: OrdersGateway,
   ) {}
 
   async create(userId: string, dto: CreateOrderDto) {
-    const address = await this.prisma.address.findFirst({
-      where: { id: dto.addressId, userId },
-    });
-    if (!address) {
-      throw new BadRequestException('Address not found or does not belong to you');
-    }
+    const quote = await this.buildQuote(userId, dto);
+    const orderItems = quote.orderItems;
+    const depositBase = quote.depositBase;
+    const depositDiscount = quote.depositDiscount;
+    const depositCharge = quote.depositCharge;
+    const finalTotalAmount = quote.finalTotalAmount;
 
-    const productIds = dto.items.map((i) => i.productId);
-    const products = await this.prisma.product.findMany({
-      where: { id: { in: productIds }, isActive: true, stock: { gt: 0 } },
-    });
-    const productMap = new Map(products.map((p) => [p.id, p]));
-
-    const orderItems: { productId: string; quantity: number; unitPrice: Decimal }[] = [];
-    let totalAmount = new Decimal(0);
-    let totalQty = 0;
-
-    for (const item of dto.items) {
-      const product = productMap.get(item.productId);
-      if (!product) {
-        throw new BadRequestException(`Product ${item.productId} not found or out of stock`);
-      }
-      if (product.stock < item.quantity) {
-        throw new BadRequestException(
-          `Insufficient stock for ${product.name}: requested ${item.quantity}, available ${product.stock}`,
-        );
-      }
-      orderItems.push({ productId: product.id, quantity: item.quantity, unitPrice: product.price });
-      totalAmount = totalAmount.add(new Decimal(product.price).mul(item.quantity));
-      totalQty += item.quantity;
-    }
-
-    const depositConfig = await this.depositsService.getRuntimeConfig();
-    const depositBase = new Decimal(depositConfig.perCanAmount).mul(totalQty);
-    const discountPercent = this.resolveTierDiscountPercent(totalQty, depositConfig.tiers, depositConfig.promoActive, depositConfig.promoStartsAt, depositConfig.promoEndsAt);
-    const depositDiscount = depositBase.mul(new Decimal(discountPercent).div(100));
-    const depositCharge = Decimal.max(new Decimal(0), depositBase.sub(depositDiscount));
-    const wallet = await this.prisma.userDepositWallet.upsert({
-      where: { userId },
-      update: {},
-      create: { userId, balance: 0 },
-    });
-    if (Number(wallet.balance) < Number(depositCharge)) {
-      throw new BadRequestException(
-        `Insufficient deposit balance. Required ${Number(depositCharge).toFixed(2)}, available ${Number(wallet.balance).toFixed(2)}. Please top-up your deposit wallet.`,
-      );
-    }
-    const finalTotalAmount = totalAmount.add(depositCharge);
-
-    const [order] = await this.prisma.$transaction([
-      this.prisma.order.create({
+    const created = await this.prisma.$transaction(async (tx) => {
+      const createdOrder = await tx.order.create({
         data: {
           userId,
-          addressId: address.id,
+          addressId: quote.address.id,
           timeSlot: dto.timeSlot,
           paymentMethod: dto.paymentMethod,
           status: 'RECEIVED',
@@ -88,34 +56,125 @@ export class OrdersService {
           },
         },
         include: { items: { include: { product: true } }, address: true },
-      }),
-      ...orderItems.map((i) =>
-        this.prisma.product.update({
-          where: { id: i.productId },
-          data: { stock: { decrement: i.quantity } },
-        }),
-      ),
-      this.prisma.userDepositWallet.update({
-        where: { userId },
-        data: { balance: { decrement: Number(depositCharge) } },
-      }),
-      this.prisma.depositTransaction.create({
-        data: {
-          userId,
-          type: 'CHARGE',
-          amount: Number(depositCharge),
-          note: 'Deposit charged for order',
-        },
-      }),
-    ]);
+      });
 
-    return this.toOrderResponse(order);
+      for (const item of orderItems) {
+        await tx.product.update({
+          where: { id: item.productId },
+          data: { stock: { decrement: item.quantity } },
+        });
+      }
+
+      if (Number(depositCharge) > 0) {
+        await tx.depositTransaction.create({
+          data: {
+            userId,
+            orderId: createdOrder.id,
+            type: 'CHARGE',
+            amount: Number(depositCharge),
+            note: 'Deposit charged for order',
+          },
+        });
+      }
+
+      return createdOrder;
+    });
+
+    const full = await this.prisma.order.findUnique({
+      where: { id: created.id },
+      include: orderFullInclude,
+    });
+    await this.notifyOrderChanged(created.id);
+    return this.toOrderResponse(full!);
+  }
+
+  async quote(userId: string, dto: CreateOrderDto) {
+    const quote = await this.buildQuote(userId, dto);
+    return {
+      itemsSubtotal: Number(quote.itemsSubtotal),
+      depositEnabled: quote.depositEnabled,
+      quantity: quote.totalQty,
+      returnedCanCount: quote.returnedCanCount,
+      chargeableCanCount: quote.chargeableCanCount,
+      depositBase: Number(quote.depositBase),
+      depositDiscount: Number(quote.depositDiscount),
+      depositCharge: Number(quote.depositCharge),
+      totalAmount: Number(quote.finalTotalAmount),
+      discountPercent: quote.discountPercent,
+    };
+  }
+
+  private async buildQuote(userId: string, dto: CreateOrderDto) {
+    const address = await this.prisma.address.findFirst({
+      where: { id: dto.addressId, userId },
+    });
+    if (!address) {
+      throw new BadRequestException('Address not found or does not belong to you');
+    }
+
+    const productIds = dto.items.map((i) => i.productId);
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: productIds }, isActive: true, stock: { gt: 0 } },
+    });
+    const productMap = new Map(products.map((p) => [p.id, p]));
+
+    const orderItems: { productId: string; quantity: number; unitPrice: Decimal }[] = [];
+    let itemsSubtotal = new Decimal(0);
+    let totalQty = 0;
+
+    for (const item of dto.items) {
+      const product = productMap.get(item.productId);
+      if (!product) {
+        throw new BadRequestException(`Product ${item.productId} not found or out of stock`);
+      }
+      if (product.stock < item.quantity) {
+        throw new BadRequestException(
+          `Insufficient stock for ${product.name}: requested ${item.quantity}, available ${product.stock}`,
+        );
+      }
+      orderItems.push({ productId: product.id, quantity: item.quantity, unitPrice: product.price });
+      itemsSubtotal = itemsSubtotal.add(new Decimal(product.price).mul(item.quantity));
+      totalQty += item.quantity;
+    }
+
+    const returnedCanCount = Math.max(0, Math.min(dto.returnedCanCount ?? 0, totalQty));
+    const chargeableCanCount = Math.max(0, totalQty - returnedCanCount);
+
+    const depositConfig = await this.depositsService.getRuntimeConfig();
+    const depositEnabled = depositConfig.enabled;
+    const depositBase = depositEnabled
+      ? new Decimal(depositConfig.perCanAmount).mul(chargeableCanCount)
+      : new Decimal(0);
+    const discountPercent = depositEnabled
+      ? this.depositsService.resolveDiscountPercentForQty(chargeableCanCount, depositConfig)
+      : 0;
+    const depositDiscount = depositEnabled
+      ? depositBase.mul(new Decimal(discountPercent).div(100))
+      : new Decimal(0);
+    const depositCharge = depositEnabled
+      ? Decimal.max(new Decimal(0), depositBase.sub(depositDiscount))
+      : new Decimal(0);
+    const finalTotalAmount = itemsSubtotal.add(depositCharge);
+    return {
+      address,
+      orderItems,
+      itemsSubtotal,
+      depositEnabled,
+      totalQty,
+      returnedCanCount,
+      chargeableCanCount,
+      discountPercent,
+      depositBase,
+      depositDiscount,
+      depositCharge,
+      finalTotalAmount,
+    };
   }
 
   async findMyOrders(userId: string) {
     const orders = await this.prisma.order.findMany({
       where: { userId },
-      include: { items: { include: { product: true } }, address: true },
+      include: orderFullInclude,
       orderBy: { createdAt: 'desc' },
     });
     return orders.map((o) => this.toOrderResponse(o));
@@ -124,7 +183,7 @@ export class OrdersService {
   async track(userId: string, orderId: string) {
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, userId },
-      include: { items: { include: { product: true } }, address: true },
+      include: orderFullInclude,
     });
     if (!order) {
       throw new NotFoundException('Order not found');
@@ -155,14 +214,96 @@ export class OrdersService {
 
     const orders = await this.prisma.order.findMany({
       where,
-      include: {
-        items: { include: { product: true } },
-        address: true,
-        user: { select: { id: true, phone: true, name: true } },
-      },
+      include: orderFullInclude,
       orderBy: { createdAt: 'desc' },
     });
     return orders.map((o) => this.toOrderResponse(o, true));
+  }
+
+  async assignOrderToPartner(orderId: string, deliveryPartnerId: string) {
+    const order = await this.prisma.order.findUnique({ where: { id: orderId } });
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.status === 'CANCELLED') {
+      throw new BadRequestException('Cannot assign a cancelled order');
+    }
+    const partner = await this.prisma.deliveryPartner.findUnique({ where: { id: deliveryPartnerId } });
+    if (!partner) throw new NotFoundException('Delivery partner not found');
+    if (!partner.isAvailable) {
+      throw new BadRequestException('Delivery partner is not available');
+    }
+    if (order.deliveryStatus !== 'NONE' && order.deliveryStatus !== 'ASSIGNED') {
+      throw new BadRequestException('Cannot reassign after pickup has started');
+    }
+    const updated = await this.prisma.order.update({
+      where: { id: orderId },
+      data: {
+        deliveryPartnerId,
+        assignedAt: new Date(),
+        deliveryStatus: 'ASSIGNED',
+      },
+      include: orderFullInclude,
+    });
+    await this.notifyOrderChanged(orderId);
+    return this.toOrderResponse(updated, true);
+  }
+
+  async findOrdersForDeliveryPartner(userId: string) {
+    const partner = await this.prisma.deliveryPartner.findUnique({ where: { userId } });
+    if (!partner) throw new NotFoundException('Delivery partner not found');
+    const orders = await this.prisma.order.findMany({
+      where: { deliveryPartnerId: partner.id },
+      include: orderFullInclude,
+      orderBy: { createdAt: 'desc' },
+    });
+    return orders.map((o) => this.toOrderResponse(o, true));
+  }
+
+  async partnerUpdateDeliveryStatus(
+    partnerUserId: string,
+    orderId: string,
+    nextStatus: string,
+    deliveryNotes?: string,
+  ) {
+    const partner = await this.prisma.deliveryPartner.findUnique({ where: { userId: partnerUserId } });
+    if (!partner) throw new NotFoundException('Delivery partner not found');
+    const order = await this.prisma.order.findUnique({ where: { id: orderId } });
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.deliveryPartnerId !== partner.id) {
+      throw new ForbiddenException('This order is not assigned to you');
+    }
+    if (order.status === 'CANCELLED') {
+      throw new BadRequestException('Order is cancelled');
+    }
+    if (!nextDeliveryStatus(order.deliveryStatus, nextStatus)) {
+      throw new BadRequestException(
+        `Invalid delivery status transition from ${order.deliveryStatus} to ${nextStatus}`,
+      );
+    }
+    const updated = await this.prisma.order.update({
+      where: { id: orderId },
+      data: {
+        deliveryStatus: nextStatus,
+        ...(deliveryNotes !== undefined ? { deliveryNotes } : {}),
+      },
+      include: orderFullInclude,
+    });
+    await this.notifyOrderChanged(orderId);
+    return this.toOrderResponse(updated, true);
+  }
+
+  async notifyOrderChanged(orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: orderFullInclude,
+    });
+    if (!order) return;
+    const body = {
+      ...this.toOrderResponse(order, true),
+      orderId: order.id,
+      userId: order.userId,
+      deliveryPartnerUserId: order.deliveryPartner?.userId ?? undefined,
+    };
+    this.ordersGateway.emitOrderUpdate(body as Record<string, unknown>);
   }
 
   async updateStatus(orderId: string, status: string) {
@@ -181,9 +322,10 @@ export class OrdersService {
       const updated = await this.prisma.order.update({
         where: { id: orderId },
         data: { status: 'CANCELLED' },
-        include: { items: { include: { product: true } }, address: true },
+        include: orderFullInclude,
       });
-      return this.toOrderResponse(updated);
+      await this.notifyOrderChanged(orderId);
+      return this.toOrderResponse(updated, true);
     }
 
     if (newIndex <= currentIndex) {
@@ -196,33 +338,14 @@ export class OrdersService {
     const updated = await this.prisma.order.update({
       where: { id: orderId },
       data: { status: newStatus },
-      include: { items: { include: { product: true } }, address: true },
+      include: orderFullInclude,
     });
-    return this.toOrderResponse(updated);
+    await this.notifyOrderChanged(orderId);
+    return this.toOrderResponse(updated, true);
   }
 
   async cancel(orderId: string) {
     return this.updateStatus(orderId, 'CANCELLED');
-  }
-
-  private resolveTierDiscountPercent(
-    qty: number,
-    tiers: Array<{ minQty: number; discountPercent: number }>,
-    promoActive: boolean,
-    promoStartsAt: Date | null,
-    promoEndsAt: Date | null,
-  ) {
-    if (!promoActive) return 0;
-    const now = new Date();
-    if (promoStartsAt && now < promoStartsAt) return 0;
-    if (promoEndsAt && now > promoEndsAt) return 0;
-    let best = 0;
-    for (const tier of tiers) {
-      if (qty >= tier.minQty) {
-        best = Math.max(best, tier.discountPercent);
-      }
-    }
-    return best;
   }
 
   private async restoreStock(orderId: string) {
@@ -252,6 +375,10 @@ export class OrdersService {
       id: string;
       userId: string;
       addressId: string;
+      deliveryPartnerId?: string | null;
+      assignedAt?: Date | null;
+      deliveryStatus?: string;
+      deliveryNotes?: string | null;
       timeSlot: string;
       paymentMethod: string;
       status: string;
@@ -275,12 +402,31 @@ export class OrdersService {
         pincode: string | null;
       };
       user?: { id: string; phone: string; name: string | null };
+      deliveryPartner?: {
+        id: string;
+        userId: string;
+        name: string;
+        phone: string;
+      } | null;
     },
     includeUser = false,
   ) {
+    const deliveryPartner = order.deliveryPartner;
     const base = {
       id: order.id,
       addressId: order.addressId,
+      deliveryPartnerId: order.deliveryPartnerId ?? null,
+      assignedAt: order.assignedAt?.toISOString() ?? null,
+      deliveryStatus: order.deliveryStatus ?? 'NONE',
+      deliveryNotes: order.deliveryNotes ?? null,
+      deliveryPartner: deliveryPartner
+        ? {
+            id: deliveryPartner.id,
+            userId: deliveryPartner.userId,
+            name: deliveryPartner.name,
+            phone: deliveryPartner.phone,
+          }
+        : null,
       timeSlot: order.timeSlot,
       paymentMethod: order.paymentMethod,
       status: order.status,

@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsNumber, IsOptional, IsUrl, Min, MinLength } from 'class-validator';
+import { IsString, IsNumber, IsOptional, IsUrl, Min, MinLength, IsArray } from 'class-validator';
 
 export class CreateProductDto {
   @ApiProperty({ example: '20L Water Can' })
@@ -17,6 +17,17 @@ export class CreateProductDto {
   @IsString()
   @IsUrl()
   photoUrl?: string;
+
+  @ApiPropertyOptional({
+    type: [String],
+    example: ['https://example.com/photo-1.jpg', 'https://example.com/photo-2.jpg'],
+    description: 'Multiple product images',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @IsUrl({}, { each: true })
+  photoUrls?: string[];
 
   @ApiProperty({ example: 50, description: 'Starting stock quantity' })
   @IsNumber()

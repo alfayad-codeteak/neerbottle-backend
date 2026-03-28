@@ -6,8 +6,11 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# bcrypt needs native build when prebuilt binaries are missing (e.g. linux-arm64 + musl)
+RUN apk add --no-cache --virtual .build-deps python3 make g++
+
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci && apk del .build-deps
 
 COPY prisma ./prisma
 RUN npx prisma generate
@@ -22,8 +25,10 @@ FROM node:20-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
+RUN apk add --no-cache --virtual .build-deps python3 make g++
+
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev && apk del .build-deps
 
 COPY prisma ./prisma
 RUN npx prisma generate

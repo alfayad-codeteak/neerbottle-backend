@@ -87,6 +87,18 @@ export class OwnerService {
     return this.toAdminResponse(updated);
   }
 
+  async removeAdmin(id: string) {
+    const user = await this.prisma.user.findFirst({
+      where: { id, role: 'admin' },
+      select: { id: true },
+    });
+    if (!user) {
+      throw new NotFoundException('Admin not found');
+    }
+    await this.prisma.user.delete({ where: { id } });
+    return { success: true, id };
+  }
+
   private toAdminResponse(u: {
     id: string;
     phone: string;

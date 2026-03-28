@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsNumber, IsOptional, IsUrl, IsBoolean, Min, MinLength } from 'class-validator';
+import { IsString, IsNumber, IsOptional, IsUrl, IsBoolean, Min, MinLength, IsArray } from 'class-validator';
 
 export class UpdateProductDto {
   @ApiPropertyOptional({ example: '20L Water Can' })
@@ -19,6 +19,17 @@ export class UpdateProductDto {
   @IsString()
   @IsUrl()
   photoUrl?: string;
+
+  @ApiPropertyOptional({
+    type: [String],
+    example: ['https://example.com/photo-1.jpg', 'https://example.com/photo-2.jpg'],
+    description: 'Replace product image list',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @IsUrl({}, { each: true })
+  photoUrls?: string[];
 
   @ApiPropertyOptional({ example: 50 })
   @IsOptional()

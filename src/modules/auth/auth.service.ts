@@ -9,6 +9,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RedisService } from '../../redis/redis.service';
 import { RegisterDto } from './dto/register.dto';
 import { RegisterOwnerDto } from './dto/register-owner.dto';
 import { LoginDto } from './dto/login.dto';
@@ -27,6 +28,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
+    private readonly redis: RedisService,
   ) {}
 
   async register(dto: RegisterDto): Promise<AuthResponseDto | OtpSentResponseDto> {
@@ -58,14 +60,7 @@ export class AuthService {
         throw new ConflictException('User already registered with this phone');
       }
       const code = this.generateOtp();
-      await this.prisma.otpVerification.deleteMany({ where: { phone } });
-      await this.prisma.otpVerification.create({
-        data: {
-          phone,
-          code,
-          expiresAt: new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000),
-        },
-      });
+      await this.saveOtp(phone, code);
       // TODO: Integrate SMS gateway (Twilio, MSG91, etc.)
       console.log(`[Auth] OTP for ${phone}: ${code}`);
       return { sent: true, message: 'OTP sent to your phone' };
@@ -129,16 +124,20 @@ export class AuthService {
   }
 
   async registerOwner(dto: RegisterOwnerDto, ownerSecretFromHeader: string): Promise<AuthResponseDto> {
-    const secret = this.config.get<string>('OWNER_SECRET');
-    if (!secret || !ownerSecretFromHeader || ownerSecretFromHeader !== secret) {
-      throw new UnauthorizedException('Invalid or missing X-Owner-Secret header');
-    }
     const existingOwner = await this.prisma.user.findFirst({
       where: { role: 'owner' },
     });
     if (existingOwner) {
       throw new BadRequestException('Owner already registered');
     }
+
+    const secret = this.config.get<string>('OWNER_SECRET')?.trim();
+    if (secret) {
+      if (!ownerSecretFromHeader || ownerSecretFromHeader !== secret) {
+        throw new UnauthorizedException('Invalid or missing X-Owner-Secret header');
+      }
+    }
+    // When OWNER_SECRET is unset/empty, first owner can register with body only (dev/simple setup).
     const existing = await this.prisma.user.findUnique({ where: { phone: dto.phone } });
     if (existing) {
       throw new ConflictException('User already registered with this phone');
@@ -157,18 +156,14 @@ export class AuthService {
   }
 
   async logout(refreshToken: string): Promise<{ success: boolean }> {
-    const stored = await this.prisma.refreshToken.findUnique({
-      where: { token: refreshToken },
-    });
-    if (stored) {
-      await this.prisma.refreshToken.delete({ where: { id: stored.id } });
-    }
+    await this.prisma.refreshToken.deleteMany({ where: { token: refreshToken } });
     return { success: true };
   }
 
   async refresh(refreshToken: string): Promise<AuthResponseDto> {
     try {
       await this.validateRefreshToken(refreshToken);
+
       const stored = await this.prisma.refreshToken.findUnique({
         where: { token: refreshToken },
         include: { user: true },
@@ -176,7 +171,16 @@ export class AuthService {
       if (!stored || stored.expiresAt < new Date()) {
         throw new UnauthorizedException('Invalid or expired refresh token');
       }
-      await this.prisma.refreshToken.delete({ where: { id: stored.id } });
+
+      // Atomic-ish single-use behavior: if another request already consumed this token,
+      // deleteMany count will be 0 and we reject this refresh attempt.
+      const deleted = await this.prisma.refreshToken.deleteMany({
+        where: { token: refreshToken },
+      });
+      if (deleted.count === 0) {
+        throw new UnauthorizedException('Invalid or expired refresh token');
+      }
+
       const tokens = await this.buildTokens(stored.user.id, stored.user.phone);
       return { ...tokens, user: this.toUserResponse(stored.user) };
     } catch (err) {
@@ -279,7 +283,26 @@ export class AuthService {
     return code;
   }
 
+  private async saveOtp(phone: string, code: string): Promise<void> {
+    const ttlSec = OTP_EXPIRY_MINUTES * 60;
+    if (this.redis.isEnabled()) {
+      await this.redis.setOtp(phone, code, ttlSec);
+      return;
+    }
+    await this.prisma.otpVerification.deleteMany({ where: { phone } });
+    await this.prisma.otpVerification.create({
+      data: {
+        phone,
+        code,
+        expiresAt: new Date(Date.now() + ttlSec * 1000),
+      },
+    });
+  }
+
   private async verifyOtp(phone: string, code: string): Promise<boolean> {
+    if (this.redis.isEnabled()) {
+      return this.redis.verifyOtp(phone, code);
+    }
     const record = await this.prisma.otpVerification.findFirst({
       where: { phone, code },
       orderBy: { createdAt: 'desc' },
@@ -288,6 +311,10 @@ export class AuthService {
   }
 
   private async deleteOtp(phone: string): Promise<void> {
+    if (this.redis.isEnabled()) {
+      await this.redis.deleteOtp(phone);
+      return;
+    }
     await this.prisma.otpVerification.deleteMany({ where: { phone } });
   }
 

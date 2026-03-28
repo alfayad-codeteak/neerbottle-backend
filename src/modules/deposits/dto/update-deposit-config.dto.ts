@@ -28,6 +28,11 @@ export class DepositTierDto {
 }
 
 export class UpdateDepositConfigDto {
+  @ApiPropertyOptional({ example: true, description: 'Enable/disable deposit feature globally' })
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
   @ApiProperty({ example: 50, description: 'Deposit amount per can' })
   @Type(() => Number)
   @IsNumber()

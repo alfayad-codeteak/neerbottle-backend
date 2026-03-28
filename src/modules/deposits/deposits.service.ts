@@ -32,6 +32,7 @@ export class DepositsService {
     const updated = await this.prisma.depositConfig.update({
       where: { id: existing.id },
       data: {
+        enabled: dto.enabled ?? existing.enabled,
         perCanAmount: dto.perCanAmount,
         promoActive: dto.promoActive ?? existing.promoActive,
         promoStartsAt: dto.promoStartsAt ? new Date(dto.promoStartsAt) : existing.promoStartsAt,
@@ -95,6 +96,7 @@ export class DepositsService {
     const config = await this.ensureConfig();
     const tiers = (Array.isArray(config.tiers) ? config.tiers : []) as Array<{ minQty?: number; discountPercent?: number }>;
     return {
+      enabled: config.enabled,
       perCanAmount: Number(config.perCanAmount),
       promoActive: config.promoActive,
       promoStartsAt: config.promoStartsAt,
@@ -104,6 +106,30 @@ export class DepositsService {
         .map((t) => ({ minQty: Number(t.minQty), discountPercent: Number(t.discountPercent) }))
         .sort((a, b) => a.minQty - b.minQty),
     };
+  }
+
+  async getPublicPricingConfig() {
+    const config = await this.getRuntimeConfig();
+    return {
+      enabled: config.enabled,
+      perCanAmount: config.perCanAmount,
+      promoActive: this.isPromoWindowActive(config.promoActive, config.promoStartsAt, config.promoEndsAt),
+      promoStartsAt: config.promoStartsAt?.toISOString() ?? null,
+      promoEndsAt: config.promoEndsAt?.toISOString() ?? null,
+      tiers: config.tiers,
+    };
+  }
+
+  resolveDiscountPercentForQty(qty: number, config: { enabled: boolean; promoActive: boolean; promoStartsAt: Date | null; promoEndsAt: Date | null; tiers: Array<{ minQty: number; discountPercent: number }> }) {
+    if (!config.enabled) return 0;
+    if (!this.isPromoWindowActive(config.promoActive, config.promoStartsAt, config.promoEndsAt)) {
+      return 0;
+    }
+    let best = 0;
+    for (const tier of config.tiers) {
+      if (qty >= tier.minQty) best = Math.max(best, tier.discountPercent);
+    }
+    return best;
   }
 
   async refundOrderDeposit(orderId: string, actorId: string) {
@@ -153,7 +179,7 @@ export class DepositsService {
     const existing = await this.prisma.depositConfig.findFirst();
     if (existing) return existing;
     return this.prisma.depositConfig.create({
-      data: { perCanAmount: 0, promoActive: false, tiers: [] },
+      data: { enabled: true, perCanAmount: 0, promoActive: false, tiers: [] },
     });
   }
 
@@ -169,8 +195,17 @@ export class DepositsService {
     return { balance: Number(balance) };
   }
 
+  private isPromoWindowActive(promoActive: boolean, promoStartsAt: Date | null, promoEndsAt: Date | null) {
+    if (!promoActive) return false;
+    const now = new Date();
+    if (promoStartsAt && now < promoStartsAt) return false;
+    if (promoEndsAt && now > promoEndsAt) return false;
+    return true;
+  }
+
   private toConfigResponse(config: {
     id: string;
+    enabled: boolean;
     perCanAmount: { toString(): string };
     promoActive: boolean;
     promoStartsAt: Date | null;
@@ -181,6 +216,7 @@ export class DepositsService {
     const tiers = Array.isArray(config.tiers) ? config.tiers : [];
     return {
       id: config.id,
+      enabled: config.enabled,
       perCanAmount: Number(config.perCanAmount),
       promoActive: config.promoActive,
       promoStartsAt: config.promoStartsAt?.toISOString() ?? null,
