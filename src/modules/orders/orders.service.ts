@@ -44,6 +44,7 @@ export class OrdersService {
           paymentMethod: dto.paymentMethod,
           status: 'RECEIVED',
           ifCanRefund: quote.ifCanRefund,
+          returnedCanCount: quote.returnedCanCount,
           totalAmount: finalTotalAmount,
           depositBase,
           depositDiscount,
@@ -420,6 +421,7 @@ export class OrdersService {
       paymentMethod: string;
       status: string;
       ifCanRefund?: boolean;
+      returnedCanCount?: number;
       totalAmount: Decimal;
       createdAt: Date;
       updatedAt: Date;
@@ -469,6 +471,7 @@ export class OrdersService {
       paymentMethod: order.paymentMethod,
       status: order.status,
       ifCanRefund: order.ifCanRefund ?? false,
+      returnedCanCount: order.returnedCanCount ?? 0,
       totalAmount: Number(order.totalAmount),
       depositBase: Number((order as { depositBase?: Decimal }).depositBase ?? 0),
       depositDiscount: Number((order as { depositDiscount?: Decimal }).depositDiscount ?? 0),
