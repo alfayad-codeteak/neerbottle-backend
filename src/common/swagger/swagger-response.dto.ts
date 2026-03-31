@@ -312,6 +312,9 @@ export class OrderResponseDto {
   @ApiProperty({ enum: ORDER_STATUS_ENUM, description: 'Warehouse / fulfilment status' })
   status: string;
 
+  @ApiProperty({ description: 'Whether this order has can-return flow enabled' })
+  ifCanRefund: boolean;
+
   @ApiProperty()
   totalAmount: number;
 
@@ -352,6 +355,9 @@ export class OrderQuoteResponseDto {
 
   @ApiProperty()
   depositEnabled: boolean;
+
+  @ApiProperty({ description: 'Whether this quote includes can return flow' })
+  ifCanRefund: boolean;
 
   @ApiProperty({ description: 'Total units ordered' })
   quantity: number;

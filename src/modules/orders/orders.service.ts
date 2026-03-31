@@ -43,6 +43,7 @@ export class OrdersService {
           timeSlot: dto.timeSlot,
           paymentMethod: dto.paymentMethod,
           status: 'RECEIVED',
+          ifCanRefund: quote.ifCanRefund,
           totalAmount: finalTotalAmount,
           depositBase,
           depositDiscount,
@@ -93,6 +94,7 @@ export class OrdersService {
     return {
       itemsSubtotal: Number(quote.itemsSubtotal),
       depositEnabled: quote.depositEnabled,
+      ifCanRefund: quote.ifCanRefund,
       quantity: quote.totalQty,
       returnedCanCount: quote.returnedCanCount,
       chargeableCanCount: quote.chargeableCanCount,
@@ -137,7 +139,9 @@ export class OrdersService {
       totalQty += item.quantity;
     }
 
-    const returnedCanCount = Math.max(0, Math.min(dto.returnedCanCount ?? 0, totalQty));
+    const ifCanRefund = dto.ifCanRefund ?? false;
+    const requestedReturned = ifCanRefund ? (dto.returnedCanCount ?? 0) : 0;
+    const returnedCanCount = Math.max(0, Math.min(requestedReturned, totalQty));
     const chargeableCanCount = Math.max(0, totalQty - returnedCanCount);
 
     const depositConfig = await this.depositsService.getRuntimeConfig();
@@ -160,6 +164,7 @@ export class OrdersService {
       orderItems,
       itemsSubtotal,
       depositEnabled,
+      ifCanRefund,
       totalQty,
       returnedCanCount,
       chargeableCanCount,
@@ -414,6 +419,7 @@ export class OrdersService {
       timeSlot: string;
       paymentMethod: string;
       status: string;
+      ifCanRefund?: boolean;
       totalAmount: Decimal;
       createdAt: Date;
       updatedAt: Date;
@@ -462,6 +468,7 @@ export class OrdersService {
       timeSlot: order.timeSlot,
       paymentMethod: order.paymentMethod,
       status: order.status,
+      ifCanRefund: order.ifCanRefund ?? false,
       totalAmount: Number(order.totalAmount),
       depositBase: Number((order as { depositBase?: Decimal }).depositBase ?? 0),
       depositDiscount: Number((order as { depositDiscount?: Decimal }).depositDiscount ?? 0),

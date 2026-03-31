@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsArray, IsIn, ValidateNested, ArrayMinSize, IsInt, Min, IsOptional } from 'class-validator';
+import { IsString, IsArray, IsIn, ValidateNested, ArrayMinSize, IsInt, Min, IsOptional, IsBoolean } from 'class-validator';
 import { Type } from 'class-transformer';
 import { PAYMENT_METHODS } from '../orders.constants';
 
@@ -42,6 +42,16 @@ export class CreateOrderDto {
   @ArrayMinSize(1)
   @Type(() => CreateOrderItemDto)
   items: CreateOrderItemDto[];
+
+  @ApiProperty({
+    required: false,
+    example: false,
+    description: 'Whether customer has empty cans to return in this order flow',
+  })
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  ifCanRefund?: boolean;
 
   @ApiProperty({
     required: false,
