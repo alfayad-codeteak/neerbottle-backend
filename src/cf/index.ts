@@ -21,6 +21,18 @@ function withCors(response: Response, origin: string | null, allowedOrigins: str
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
+function isRetryableContainerError(message: string): boolean {
+  return (
+    message.includes('not running') ||
+    message.includes('no container instance') ||
+    message.includes('try again later')
+  );
+}
+
+async function wait(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class ApiContainer extends Container {
   defaultPort = 3000;
   sleepAfter = '5m';
@@ -79,27 +91,31 @@ export default {
       fetch: (request: Request) => Promise<Response>;
     };
 
-    if (container.startAndWaitForPorts) {
-      await container.startAndWaitForPorts();
-    } else if (container.start) {
-      await container.start();
-    }
-
-    try {
-      const response = await container.fetch(request);
-      return withCors(response, origin, allowedOrigins);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes('not running')) {
+    const retryDelaysMs = [400, 1000, 2000];
+    for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+      try {
         if (container.startAndWaitForPorts) {
           await container.startAndWaitForPorts();
         } else if (container.start) {
           await container.start();
         }
+
         const response = await container.fetch(request);
         return withCors(response, origin, allowedOrigins);
+      } catch (error) {
+        const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+        const shouldRetry = isRetryableContainerError(message) && attempt < retryDelaysMs.length;
+        if (!shouldRetry) break;
+        await wait(retryDelaysMs[attempt]);
       }
-      throw error;
     }
+
+    const unavailable = withCors(
+      new Response('Container is warming up. Please retry in a few seconds.', { status: 503 }),
+      origin,
+      allowedOrigins,
+    );
+    unavailable.headers.set('Retry-After', '5');
+    return unavailable;
   },
 };
