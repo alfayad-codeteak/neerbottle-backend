@@ -1,0 +1,28 @@
+{
+  // Cloudflare Worker that proxies requests to a Container-backed Durable Object.
+  // See cloudflare.md for deployment checklist.
+  "name": "fliq-water-backend",
+  "account_id": "1046220d5ee2c3650b7ae67a9a165500",
+  "main": "src/cf/index.ts",
+  "compatibility_date": "2026-04-01",
+
+  "observability": { "enabled": true },
+
+  "containers": [
+    {
+      "class_name": "ApiContainer",
+      "image": "./Dockerfile",
+      "max_instances": 3
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [{ "name": "API_CONTAINER", "class_name": "ApiContainer" }]
+  },
+
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ApiContainer"] }],
+
+  "vars": {
+    "NODE_ENV": "production"
+  }
+}

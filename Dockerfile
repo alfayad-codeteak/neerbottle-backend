@@ -37,6 +37,7 @@ COPY --from=builder /app/dist ./dist
 
 EXPOSE 3000
 
-## Run DB migrations then start API
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main"]
+## Start API process directly.
+## Run migrations separately in CI/CD or manually to avoid startup crash loops.
+CMD ["node", "dist/main"]
 

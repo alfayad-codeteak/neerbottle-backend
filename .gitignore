@@ -39,4 +39,4 @@ coverage/
 *.md
 !README.md
 !docker.md
-!render-hosting.md
+!cloudflare.md
