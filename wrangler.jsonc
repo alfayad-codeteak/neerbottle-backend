@@ -1,7 +1,7 @@
 {
   // Cloudflare Worker that proxies requests to a Container-backed Durable Object.
   // See cloudflare.md for deployment checklist.
-  "name": "fliq-water-backend",
+  "name": "neerbottle-backend",
   "account_id": "1046220d5ee2c3650b7ae67a9a165500",
   "main": "src/cf/index.ts",
   "compatibility_date": "2026-04-01",
