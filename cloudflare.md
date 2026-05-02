@@ -7,6 +7,7 @@
    - `npx wrangler secret put JWT_ACCESS_SECRET`
    - `npx wrangler secret put JWT_REFRESH_SECRET`
    - `npx wrangler secret put CORS_ORIGINS`
+   - (SMS OTP) `npx wrangler secret put MSG91_AUTH_KEY` — optional vars: `MSG91_TEMPLATE_ID`, `MSG91_OTP_SHOP_NAME` (see `.env.example`)
 3. Deploy:
    - `npx wrangler deploy`
 4. Validate:
@@ -201,7 +202,7 @@ Create `wrangler.jsonc` at repo root:
 
 ```jsonc
 {
-  "name": "fliq-water-backend",
+  "name": "neerbottle-backend",
   "main": "src/cf/index.ts",
   "compatibility_date": "2026-04-01",
 
@@ -396,7 +397,7 @@ Checklist:
 ### 10.2 Route traffic to the Worker
 
 In Cloudflare dashboard (Workers & Pages):
-- [ ] Add a **route** like `api.fliqwater.com/*` to `fliq-water-backend`
+- [ ] Add a **route** like `api.example.com/*` to `neerbottle-backend` (or your `wrangler.jsonc` `name`)
 
 ### 10.3 TLS mode
 
@@ -448,6 +449,9 @@ Practical tips for this app (moderate traffic + realtime):
 
 ## 14) Troubleshooting
 
+- **404 on a new Nest route (e.g. `/api/auth/send-login-otp`) after dashboard changes**
+  - Adding **secrets/vars only** in the Cloudflare dashboard does **not** rebuild the **container image**. The Nest app lives inside the image built from `./Dockerfile`.
+  - Fix: deploy from CI or locally with `npx wrangler deploy` after merging the code change so Wrangler **builds and pushes a new image** that includes the new routes.
 - **Provisioning delay after first deploy**
   - Wait a few minutes; containers are provisioned after Worker deploy
 - **Prisma issues**
