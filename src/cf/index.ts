@@ -58,6 +58,9 @@ export class ApiContainer extends Container {
       REDIS_HOST: pick('REDIS_HOST') ?? '',
       REDIS_PORT: pick('REDIS_PORT') ?? '',
       REDIS_PASSWORD: pick('REDIS_PASSWORD') ?? '',
+      MSG91_AUTH_KEY: pick('MSG91_AUTH_KEY') ?? '',
+      MSG91_TEMPLATE_ID: pick('MSG91_TEMPLATE_ID') ?? '',
+      MSG91_OTP_SHOP_NAME: pick('MSG91_OTP_SHOP_NAME') ?? '',
     };
   }
 }

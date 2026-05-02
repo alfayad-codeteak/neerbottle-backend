@@ -12,6 +12,7 @@ import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { RegisterOwnerDto } from './dto/register-owner.dto';
 import { LoginDto } from './dto/login.dto';
+import { SendLoginOtpDto } from './dto/send-login-otp.dto';
 import { DeliveryPartnerLoginDto } from './dto/delivery-partner-login.dto';
 import { RefreshTokenDto } from './dto/refresh.dto';
 import { LogoutDto } from './dto/logout.dto';
@@ -74,6 +75,24 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'Invalid credentials or expired OTP.', type: ApiErrorResponseDto })
   async login(@Body() dto: LoginDto): Promise<AuthResponseDto> {
     return this.authService.login(dto);
+  }
+
+  @Post('send-login-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Request OTP for customer login',
+    description:
+      'Sends a 6-digit OTP to the phone when an account exists. Use with **`POST /auth/login`** (`phone` + `otp`). Same MSG91 template as registration.',
+  })
+  @ApiOkResponse({ description: 'OTP dispatched (or queued at provider).', type: OtpSentResponseDto })
+  @ApiResponse({ status: 401, description: 'No account for this phone.', type: ApiErrorResponseDto })
+  @ApiResponse({
+    status: 503,
+    description: 'Database unavailable or SMS provider error.',
+    type: ApiErrorResponseDto,
+  })
+  async sendLoginOtp(@Body() dto: SendLoginOtpDto): Promise<OtpSentResponseDto> {
+    return this.authService.sendLoginOtp(dto.phone);
   }
 
   @Post('login-owner')

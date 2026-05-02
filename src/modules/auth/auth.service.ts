@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   UnauthorizedException,
   BadRequestException,
   ConflictException,
@@ -11,6 +12,7 @@ import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
+import { Msg91Service } from '../../msg91/msg91.service';
 import { RegisterDto } from './dto/register.dto';
 import { RegisterOwnerDto } from './dto/register-owner.dto';
 import { LoginDto } from './dto/login.dto';
@@ -26,11 +28,14 @@ const SALT_ROUNDS = 10;
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
     private readonly redis: RedisService,
+    private readonly msg91: Msg91Service,
   ) {}
 
   async register(dto: RegisterDto): Promise<AuthResponseDto | OtpSentResponseDto> {
@@ -63,11 +68,34 @@ export class AuthService {
       }
       const code = this.generateOtp();
       await this.saveOtp(phone, code);
-      // TODO: Integrate SMS gateway (Twilio, MSG91, etc.)
-      console.log(`[Auth] OTP for ${phone}: ${code}`);
+      await this.deliverOtpSms(phone, code, name ?? this.msg91.defaultShopName());
       return { sent: true, message: 'OTP sent to your phone' };
     } catch (err) {
       if (err instanceof BadRequestException || err instanceof ConflictException) {
+        throw err;
+      }
+      if (err instanceof ServiceUnavailableException) {
+        throw err;
+      }
+      if (this.isDbUnavailableError(err)) {
+        throw new ServiceUnavailableException(DB_UNAVAILABLE_MSG);
+      }
+      throw err;
+    }
+  }
+
+  async sendLoginOtp(phone: string): Promise<OtpSentResponseDto> {
+    try {
+      const user = await this.prisma.user.findUnique({ where: { phone } });
+      if (!user) {
+        throw new UnauthorizedException('Invalid phone or password');
+      }
+      const code = this.generateOtp();
+      await this.saveOtp(phone, code);
+      await this.deliverOtpSms(phone, code, user.name ?? this.msg91.defaultShopName());
+      return { sent: true, message: 'OTP sent to your phone' };
+    } catch (err) {
+      if (err instanceof UnauthorizedException || err instanceof ServiceUnavailableException) {
         throw err;
       }
       if (this.isDbUnavailableError(err)) {
@@ -348,6 +376,13 @@ export class AuthService {
       });
     } catch {
       throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+  }
+
+  private async deliverOtpSms(phone: string, code: string, nameForTemplate: string): Promise<void> {
+    await this.msg91.sendOtpSms(phone, code, nameForTemplate);
+    if (!this.msg91.isEnabled()) {
+      this.logger.log(`[Auth] OTP for ${phone}: ${code} (MSG91_AUTH_KEY unset — not sent via SMS)`);
     }
   }
 
