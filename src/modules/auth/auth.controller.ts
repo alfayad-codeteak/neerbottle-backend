@@ -71,6 +71,45 @@ export class AuthController {
     return this.authService.register(dto);
   }
 
+  @Post('send-login-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Request OTP before login (any customer phone)',
+    description: [
+      'Sends a **6-digit OTP** via SMS (MSG91) for the given **10-digit** `phone`.',
+      '**Does not** query or require an existing user — same flow for new and returning phones. The SMS `##name##` placeholder uses `MSG91_OTP_SHOP_NAME` (default shop name), not the user profile.',
+      '',
+      '**Request:**',
+      '```json',
+      '{ "phone": "9876543210" }',
+      '```',
+      '',
+      '**Response (`OtpSentResponseDto`):** `{ "sent": true, "message": "OTP sent to your phone" }`',
+      '',
+      '**Next step — verify OTP and open a session:** `POST /api/auth/login` with `{ "phone": "<same>", "otp": "123456" }`.',
+      'If no user existed for that phone, **`POST /auth/login` creates** a customer (`User` with `phone` only) after successful OTP verification.',
+      '',
+      '**Errors:**',
+      '- **503** — database unavailable (OTP storage) or SMS provider failure.',
+      '',
+      '**Note:** `POST /api/auth/register` step 1 still returns **409** if the phone is already registered (explicit signup). This endpoint is for the **unified login / magic-OTP** flow.',
+    ].join('\n'),
+  })
+  @ApiOkResponse({ description: 'OTP dispatched (or logged in dev when MSG91 unset).', type: OtpSentResponseDto })
+  @ApiResponse({
+    status: 429,
+    description: 'OTP send cooldown or hourly limit for this phone.',
+    type: ApiErrorResponseDto,
+  })
+  @ApiResponse({
+    status: 503,
+    description: 'Database unavailable or SMS provider error.',
+    type: ApiErrorResponseDto,
+  })
+  async sendLoginOtp(@Body() dto: SendLoginOtpDto): Promise<OtpSentResponseDto> {
+    return this.authService.sendLoginOtp(dto.phone);
+  }
+
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -111,45 +150,6 @@ export class AuthController {
   @ApiResponse({ status: 503, description: 'Database unavailable.', type: ApiErrorResponseDto })
   async login(@Body() dto: LoginDto): Promise<AuthResponseDto> {
     return this.authService.login(dto);
-  }
-
-  @Post('send-login-otp')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Request OTP before login (any customer phone)',
-    description: [
-      'Sends a **6-digit OTP** via SMS (MSG91) for the given **10-digit** `phone`.',
-      '**Does not** query or require an existing user — same flow for new and returning phones. The SMS `##name##` placeholder uses `MSG91_OTP_SHOP_NAME` (default shop name), not the user profile.',
-      '',
-      '**Request:**',
-      '```json',
-      '{ "phone": "9876543210" }',
-      '```',
-      '',
-      '**Response (`OtpSentResponseDto`):** `{ "sent": true, "message": "OTP sent to your phone" }`',
-      '',
-      '**Next step — verify OTP and open a session:** `POST /api/auth/login` with `{ "phone": "<same>", "otp": "123456" }`.',
-      'If no user existed for that phone, **`POST /auth/login` creates** a customer (`User` with `phone` only) after successful OTP verification.',
-      '',
-      '**Errors:**',
-      '- **503** — database unavailable (OTP storage) or SMS provider failure.',
-      '',
-      '**Note:** `POST /api/auth/register` step 1 still returns **409** if the phone is already registered (explicit signup). This endpoint is for the **unified login / magic-OTP** flow.',
-    ].join('\n'),
-  })
-  @ApiOkResponse({ description: 'OTP dispatched (or logged in dev when MSG91 unset).', type: OtpSentResponseDto })
-  @ApiResponse({
-    status: 429,
-    description: 'OTP send cooldown or hourly limit for this phone.',
-    type: ApiErrorResponseDto,
-  })
-  @ApiResponse({
-    status: 503,
-    description: 'Database unavailable or SMS provider error.',
-    type: ApiErrorResponseDto,
-  })
-  async sendLoginOtp(@Body() dto: SendLoginOtpDto): Promise<OtpSentResponseDto> {
-    return this.authService.sendLoginOtp(dto.phone);
   }
 
   @Post('login-owner')
