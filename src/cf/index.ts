@@ -25,12 +25,49 @@ function isRetryableContainerError(message: string): boolean {
   return (
     message.includes('not running') ||
     message.includes('no container instance') ||
-    message.includes('try again later')
+    message.includes('try again later') ||
+    message.includes('network connection lost') ||
+    message.includes('operation was aborted') ||
+    message.includes('durable object reset') ||
+    message.includes('its code was updated') ||
+    message.includes('connection reset') ||
+    message.includes('econnreset')
   );
 }
 
 async function wait(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+type ContainerStub = {
+  startAndWaitForPorts?: () => Promise<void>;
+  start?: () => Promise<unknown>;
+  fetch: (request: Request) => Promise<Response>;
+};
+
+/** Proxies to Nest; returns null if all retries exhausted without a response. */
+async function fetchFromContainer(request: Request, env: unknown): Promise<Response | null> {
+  const container = getContainer((env as { API_CONTAINER: unknown }).API_CONTAINER, 'api') as ContainerStub;
+
+  // Extra backoff after deploys: DO “code was updated” / “network connection lost” often recover quickly.
+  const retryDelaysMs = [500, 1200, 2500, 4000];
+  for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+    try {
+      if (container.startAndWaitForPorts) {
+        await container.startAndWaitForPorts();
+      } else if (container.start) {
+        await container.start();
+      }
+
+      return await container.fetch(request);
+    } catch (error) {
+      const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+      const shouldRetry = isRetryableContainerError(message) && attempt < retryDelaysMs.length;
+      if (!shouldRetry) break;
+      await wait(retryDelaysMs[attempt]);
+    }
+  }
+  return null;
 }
 
 export class ApiContainer extends Container {
@@ -70,7 +107,11 @@ export default {
     const origin = request.headers.get('Origin');
     const allowedOrigins = getAllowedOrigins(env);
 
+    // Let Nest answer preflight using the same `CORS_ORIGINS` as the API (container env).
+    // The old Worker-only allowlist defaulted to localhost and blocked production sites like https://www.neerbottle.in.
     if (request.method === 'OPTIONS') {
+      const fromNest = await fetchFromContainer(request, env);
+      if (fromNest) return fromNest;
       if (origin && allowedOrigins.includes(origin)) {
         return new Response(null, {
           status: 204,
@@ -88,37 +129,17 @@ export default {
       return new Response(null, { status: 204 });
     }
 
-    const container = getContainer((env as { API_CONTAINER: unknown }).API_CONTAINER, 'api') as {
-      startAndWaitForPorts?: () => Promise<void>;
-      start?: () => Promise<unknown>;
-      fetch: (request: Request) => Promise<Response>;
-    };
-
-    const retryDelaysMs = [400, 1000, 2000];
-    for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
-      try {
-        if (container.startAndWaitForPorts) {
-          await container.startAndWaitForPorts();
-        } else if (container.start) {
-          await container.start();
-        }
-
-        const response = await container.fetch(request);
-        return withCors(response, origin, allowedOrigins);
-      } catch (error) {
-        const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
-        const shouldRetry = isRetryableContainerError(message) && attempt < retryDelaysMs.length;
-        if (!shouldRetry) break;
-        await wait(retryDelaysMs[attempt]);
-      }
+    const response = await fetchFromContainer(request, env);
+    if (!response) {
+      const unavailable = withCors(
+        new Response('Container is warming up. Please retry in a few seconds.', { status: 503 }),
+        origin,
+        allowedOrigins,
+      );
+      unavailable.headers.set('Retry-After', '5');
+      return unavailable;
     }
 
-    const unavailable = withCors(
-      new Response('Container is warming up. Please retry in a few seconds.', { status: 503 }),
-      origin,
-      allowedOrigins,
-    );
-    unavailable.headers.set('Retry-After', '5');
-    return unavailable;
+    return withCors(response, origin, allowedOrigins);
   },
 };

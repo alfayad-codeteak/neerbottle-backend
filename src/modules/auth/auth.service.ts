@@ -13,6 +13,7 @@ import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { Msg91Service } from '../../msg91/msg91.service';
+import { secretFromConfig } from '../../config/secret-from-env';
 import { RegisterDto } from './dto/register.dto';
 import { RegisterOwnerDto } from './dto/register-owner.dto';
 import { LoginDto } from './dto/login.dto';
@@ -310,8 +311,8 @@ export class AuthService {
   }
 
   private async buildTokens(userId: string, phone: string): Promise<Omit<AuthResponseDto, 'user'>> {
-    const accessSecret = this.config.get<string>('JWT_ACCESS_SECRET') ?? 'access-secret-change-me';
-    const refreshSecret = this.config.get<string>('JWT_REFRESH_SECRET') ?? 'refresh-secret-change-me';
+    const accessSecret = secretFromConfig(this.config, 'JWT_ACCESS_SECRET', 'access-secret-change-me');
+    const refreshSecret = secretFromConfig(this.config, 'JWT_REFRESH_SECRET', 'refresh-secret-change-me');
     const accessExpires = this.config.get<string>('JWT_ACCESS_EXPIRES') ?? '15m';
     const refreshExpires = this.config.get<string>('JWT_REFRESH_EXPIRES') ?? '7d';
 
@@ -369,7 +370,7 @@ export class AuthService {
   }
 
   private async validateRefreshToken(token: string): Promise<{ sub: string }> {
-    const refreshSecret = this.config.get<string>('JWT_REFRESH_SECRET') ?? 'refresh-secret-change-me';
+    const refreshSecret = secretFromConfig(this.config, 'JWT_REFRESH_SECRET', 'refresh-secret-change-me');
     try {
       return await this.jwtService.verifyAsync<{ sub: string }>(token, {
         secret: refreshSecret,

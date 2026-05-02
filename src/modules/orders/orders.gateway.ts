@@ -7,6 +7,7 @@ import {
   OnGatewayConnection,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
+import { secretFromConfig } from '../../config/secret-from-env';
 
 @WebSocketGateway({
   namespace: '/orders',
@@ -42,7 +43,7 @@ export class OrdersGateway implements OnGatewayConnection {
       return;
     }
     try {
-      const secret = this.config.get<string>('JWT_ACCESS_SECRET') ?? 'access-secret-change-me';
+      const secret = secretFromConfig(this.config, 'JWT_ACCESS_SECRET', 'access-secret-change-me');
       const payload = await this.jwt.verifyAsync<{ sub: string }>(raw, { secret });
       const userId = payload.sub;
       client.data.userId = userId;

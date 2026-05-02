@@ -6,6 +6,7 @@ import { Msg91Module } from '../../msg91/msg91.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { secretFromConfig } from '../../config/secret-from-env';
 
 @Module({
   imports: [
@@ -14,7 +15,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('JWT_ACCESS_SECRET') ?? 'access-secret-change-me',
+        secret: secretFromConfig(config, 'JWT_ACCESS_SECRET', 'access-secret-change-me'),
         signOptions: { expiresIn: 900 }, // 15m in seconds
       }),
       inject: [ConfigService],

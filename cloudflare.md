@@ -6,7 +6,7 @@
    - `npx wrangler secret put DATABASE_URL`
    - `npx wrangler secret put JWT_ACCESS_SECRET`
    - `npx wrangler secret put JWT_REFRESH_SECRET`
-   - `npx wrangler secret put CORS_ORIGINS`
+   - `npx wrangler secret put CORS_ORIGINS` — must list **every browser origin** that calls the API (e.g. `https://www.neerbottle.in,https://neerbottle.in`). Apex and `www` are different origins; omitting one causes CORS preflight failures in the browser.
    - (SMS OTP) `npx wrangler secret put MSG91_AUTH_KEY` — optional vars: `MSG91_TEMPLATE_ID`, `MSG91_OTP_SHOP_NAME` (see `.env.example`)
 3. Deploy:
    - `npm run cf:deploy` (or `npx wrangler deploy --containers-rollout=immediate`)
@@ -454,6 +454,11 @@ Practical tips for this app (moderate traffic + realtime):
 - **404 on a new Nest route (e.g. `/api/auth/send-login-otp`) after dashboard changes**
   - Adding **secrets/vars only** in the Cloudflare dashboard does **not** rebuild the **container image**. The Nest app lives inside the image built from `./Dockerfile`.
   - Fix: deploy from CI or locally with `npx wrangler deploy` after merging the code change so Wrangler **builds and pushes a new image** that includes the new routes.
+- **Browser `503` on `/api/*` right after a deploy, or logs show `Network connection lost` / `Durable Object reset because its code was updated`**
+  - Usually **transient**: the container or DO is restarting while traffic still hits the old connection. The Worker retries proxying; wait a few seconds and retry the request. Avoid load-testing the API during active deploys.
+  - If **503 persists for minutes**, inspect container logs for Nest crashes (DB URL, JWT secrets, etc.) or use **`npm run cf:deploy`** with `--containers-rollout=immediate` so all instances move to the new image together.
+- **`JwtStrategy requires a secret or key` / container exits before listening on port 3000**
+  - `JWT_ACCESS_SECRET` (and `JWT_REFRESH_SECRET`) must be **non-empty** in the Worker bindings that are passed into the container. An **empty plain text variable** in the dashboard counts as set but blank — passport-jwt rejects `secretOrKey: ""`. Use **`wrangler secret put JWT_ACCESS_SECRET`** (and refresh) with real values, or remove empty vars so secrets are not injected as `""`.
 - **`DURABLE_OBJECT_ALREADY_HAS_APPLICATION` / `name fliq-water-backend-apicontainer` on deploy**
   - The **container application id** is tied to your account’s first deploy. If you **rename the Worker** in `wrangler.jsonc`, Wrangler defaults to a **new** container name (`<new-worker>-apicontainer`), which conflicts with the existing Durable Object binding.
   - Fix: set an explicit stable `"name"` on the `containers[]` entry (this repo uses `"fliq-water-backend-apicontainer"`) so the Worker can be renamed while updates still target the same container app. See Cloudflare Wrangler docs: optional `name` under **Containers**.
