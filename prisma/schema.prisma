@@ -3,6 +3,7 @@
 
 generator client {
   provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
 }
 
 datasource db {
@@ -174,10 +175,20 @@ model RefreshToken {
 
 model OtpVerification {
   id        String   @id @default(cuid())
-  phone    String
-  code     String
+  phone     String
+  purpose   String   @default("login")
+  code      String
   expiresAt DateTime
   createdAt DateTime @default(now())
 
   @@index([phone])
+  @@index([phone, purpose])
+}
+
+model OtpSendLog {
+  id     String   @id @default(cuid())
+  phone  String
+  sentAt DateTime @default(now())
+
+  @@index([phone, sentAt])
 }

@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../../generated/prisma';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UpdateDepositConfigDto } from './dto/update-deposit-config.dto';
 import { AdminAdjustDepositDto } from './dto/admin-adjust-deposit.dto';

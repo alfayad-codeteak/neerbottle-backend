@@ -4,7 +4,11 @@ import { IsString, Matches } from 'class-validator';
 const PHONE_REGEX = /^[0-9]{10}$/;
 
 export class SendLoginOtpDto {
-  @ApiProperty({ example: '9876543210' })
+  @ApiProperty({
+    example: '9876543210',
+    description:
+      '10-digit phone. OTP is sent regardless of whether a `User` already exists; then call `POST /api/auth/login` with `otp` to verify and sign in (creating a customer if new).',
+  })
   @IsString()
   @Matches(PHONE_REGEX, { message: 'Phone must be 10 digits' })
   phone: string;

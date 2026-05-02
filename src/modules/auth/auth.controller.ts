@@ -51,7 +51,17 @@ export class AuthController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Validation failure or invalid OTP.',
+    description: 'Validation failure.',
+    type: ApiErrorResponseDto,
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Invalid or expired OTP (registration verify step).',
+    type: ApiErrorResponseDto,
+  })
+  @ApiResponse({
+    status: 429,
+    description: 'OTP send cooldown or hourly limit exceeded.',
     type: ApiErrorResponseDto,
   })
   @ApiResponse({ status: 409, description: 'Phone already registered.', type: ApiErrorResponseDto })
@@ -64,15 +74,41 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Customer, staff, or delivery partner login',
-    description:
-      'Authenticate with **phone + password** or **phone + OTP**. Returns short-lived `accessToken`, rotating `refreshToken`, `expiresIn` (seconds), and `user` including `role` and `permissions` (admins). For partner-only apps, prefer **`POST /auth/login-delivery-partner`** so non-partner accounts receive 401.',
+    summary: 'Login (password or OTP) — OTP verifies and issues session',
+    description: [
+      '### Password login',
+      'Body: `{ "phone": "9876543210", "password": "yourpassword" }` — user must already exist with a password set.',
+      '',
+      '### OTP login (customer phone; **this is the OTP verification API**)',
+      '**Prerequisite:** call **`POST /api/auth/send-login-otp`** with `{ "phone": "9876543210" }` so an OTP is sent to the phone.',
+      '',
+      '**Verify and sign in:** `POST /api/auth/login` with:',
+      '```json',
+      '{ "phone": "9876543210", "otp": "123456" }',
+      '```',
+      '',
+      '**Behavior:**',
+      '- Checks the OTP for that `phone` (10 digits, same as send step).',
+      '- If OTP is wrong or expired → **401** `Invalid or expired OTP`.',
+      '- If OTP is valid → OTP is consumed, then **`User` is loaded or created** by `phone` (creates a **customer** with phone only if new; existing row unchanged except `updatedAt`).',
+      '- Returns **`AuthResponseDto`**: `accessToken`, `refreshToken`, `expiresIn`, `user` (`id`, `phone`, `name`, `role`, optional `permissions` for admins).',
+      '',
+      '**Do not** send both `password` and `otp` in one request (validation requires one or the other).',
+      '',
+      'Staff/owner/admin use the same endpoint; **`POST /auth/login-owner`** restricts to `role === owner`. Delivery partners should use **`POST /auth/login-delivery-partner`** (password only).',
+    ].join('\n'),
   })
   @ApiOkResponse({
-    description: 'Authenticated session.',
+    description: 'Authenticated session after password or successful OTP verification.',
     type: AuthResponseDto,
   })
-  @ApiResponse({ status: 401, description: 'Invalid credentials or expired OTP.', type: ApiErrorResponseDto })
+  @ApiResponse({
+    status: 400,
+    description: 'Missing both password and OTP, or validation error.',
+    type: ApiErrorResponseDto,
+  })
+  @ApiResponse({ status: 401, description: 'Invalid password, unknown phone (password path), or invalid/expired OTP (OTP path).', type: ApiErrorResponseDto })
+  @ApiResponse({ status: 503, description: 'Database unavailable.', type: ApiErrorResponseDto })
   async login(@Body() dto: LoginDto): Promise<AuthResponseDto> {
     return this.authService.login(dto);
   }
@@ -80,12 +116,33 @@ export class AuthController {
   @Post('send-login-otp')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Request OTP for customer login',
-    description:
-      'Sends a 6-digit OTP to the phone when an account exists. Use with **`POST /auth/login`** (`phone` + `otp`). Same MSG91 template as registration.',
+    summary: 'Request OTP before login (any customer phone)',
+    description: [
+      'Sends a **6-digit OTP** via SMS (MSG91) for the given **10-digit** `phone`.',
+      '**Does not** query or require an existing user — same flow for new and returning phones. The SMS `##name##` placeholder uses `MSG91_OTP_SHOP_NAME` (default shop name), not the user profile.',
+      '',
+      '**Request:**',
+      '```json',
+      '{ "phone": "9876543210" }',
+      '```',
+      '',
+      '**Response (`OtpSentResponseDto`):** `{ "sent": true, "message": "OTP sent to your phone" }`',
+      '',
+      '**Next step — verify OTP and open a session:** `POST /api/auth/login` with `{ "phone": "<same>", "otp": "123456" }`.',
+      'If no user existed for that phone, **`POST /auth/login` creates** a customer (`User` with `phone` only) after successful OTP verification.',
+      '',
+      '**Errors:**',
+      '- **503** — database unavailable (OTP storage) or SMS provider failure.',
+      '',
+      '**Note:** `POST /api/auth/register` step 1 still returns **409** if the phone is already registered (explicit signup). This endpoint is for the **unified login / magic-OTP** flow.',
+    ].join('\n'),
   })
-  @ApiOkResponse({ description: 'OTP dispatched (or queued at provider).', type: OtpSentResponseDto })
-  @ApiResponse({ status: 401, description: 'No account for this phone.', type: ApiErrorResponseDto })
+  @ApiOkResponse({ description: 'OTP dispatched (or logged in dev when MSG91 unset).', type: OtpSentResponseDto })
+  @ApiResponse({
+    status: 429,
+    description: 'OTP send cooldown or hourly limit for this phone.',
+    type: ApiErrorResponseDto,
+  })
   @ApiResponse({
     status: 503,
     description: 'Database unavailable or SMS provider error.',

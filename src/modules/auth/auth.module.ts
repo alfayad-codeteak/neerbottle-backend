@@ -7,6 +7,7 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { secretFromConfig } from '../../config/secret-from-env';
+import { parseExpiresToSeconds } from '../../config/parse-jwt-expires';
 
 @Module({
   imports: [
@@ -16,7 +17,9 @@ import { secretFromConfig } from '../../config/secret-from-env';
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
         secret: secretFromConfig(config, 'JWT_ACCESS_SECRET', 'access-secret-change-me'),
-        signOptions: { expiresIn: 900 }, // 15m in seconds
+        signOptions: {
+          expiresIn: parseExpiresToSeconds(config.get<string>('JWT_ACCESS_EXPIRES') ?? '15m'),
+        },
       }),
       inject: [ConfigService],
     }),

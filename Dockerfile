@@ -10,13 +10,13 @@ WORKDIR /app
 RUN apk add --no-cache --virtual .build-deps python3 make g++
 
 COPY package.json package-lock.json ./
-RUN npm ci && apk del .build-deps
-
 COPY prisma ./prisma
-RUN npx prisma generate
+RUN npm ci && apk del .build-deps
 
 COPY tsconfig*.json nest-cli.json ./
 COPY src ./src
+RUN npx prisma generate
+
 RUN npm run build
 
 
@@ -28,9 +28,8 @@ ENV NODE_ENV=production
 RUN apk add --no-cache --virtual .build-deps python3 make g++
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && apk del .build-deps
-
 COPY prisma ./prisma
+RUN npm ci --omit=dev && apk del .build-deps
 RUN npx prisma generate
 
 COPY --from=builder /app/dist ./dist
@@ -40,4 +39,3 @@ EXPOSE 3000
 ## Start API process directly.
 ## Run migrations separately in CI/CD or manually to avoid startup crash loops.
 CMD ["node", "dist/main"]
-

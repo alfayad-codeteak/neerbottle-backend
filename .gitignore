@@ -31,6 +31,8 @@ coverage/
 
 # Prisma
 # Keep prisma/migrations in git
+# Client generated into src/ (see schema generator `output`) — regenerate with `npx prisma generate`
+src/generated/prisma/
 
 # Misc
 *.tsbuildinfo

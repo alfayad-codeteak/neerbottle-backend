@@ -6,14 +6,19 @@ import {
   ConflictException,
   ServiceUnavailableException,
   InternalServerErrorException,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
+import { randomInt } from 'node:crypto';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
-import { RedisService } from '../../redis/redis.service';
+import { RedisService, type OtpPurpose } from '../../redis/redis.service';
 import { Msg91Service } from '../../msg91/msg91.service';
 import { secretFromConfig } from '../../config/secret-from-env';
+import { parseExpiresToSeconds, refreshExpiryToDate } from '../../config/parse-jwt-expires';
+import { Prisma } from '../../generated/prisma';
 import { RegisterDto } from './dto/register.dto';
 import { RegisterOwnerDto } from './dto/register-owner.dto';
 import { LoginDto } from './dto/login.dto';
@@ -26,6 +31,9 @@ const DB_UNAVAILABLE_MSG =
 const OTP_EXPIRY_MINUTES = 10;
 const OTP_LENGTH = 6;
 const SALT_ROUNDS = 10;
+const OTP_SEND_COOLDOWN_MS = 60_000;
+const OTP_SEND_MAX_PER_HOUR = 10;
+const MAX_REFRESH_SESSIONS_PER_USER = 15;
 
 @Injectable()
 export class AuthService {
@@ -44,10 +52,9 @@ export class AuthService {
 
     try {
       if (otp) {
-        // Verify OTP and create user
-        const valid = await this.verifyOtp(phone, otp);
-        if (!valid) {
-          throw new BadRequestException('Invalid or expired OTP');
+        const consumed = await this.consumeOtp(phone, otp, 'register');
+        if (!consumed) {
+          throw new UnauthorizedException('Invalid or expired OTP');
         }
         const existing = await this.prisma.user.findUnique({ where: { phone } });
         if (existing) {
@@ -57,7 +64,6 @@ export class AuthService {
         const user = await this.prisma.user.create({
           data: { phone, name: name ?? null, passwordHash },
         });
-        await this.deleteOtp(phone);
         const tokens = await this.buildTokens(user.id, user.phone);
         return { ...tokens, user: this.toUserResponse(user) };
       }
@@ -67,12 +73,19 @@ export class AuthService {
       if (existing) {
         throw new ConflictException('User already registered with this phone');
       }
-      const code = this.generateOtp();
-      await this.saveOtp(phone, code);
-      await this.deliverOtpSms(phone, code, name ?? this.msg91.defaultShopName());
+      await this.sendOtpSmsWithThrottle({
+        phone,
+        purpose: 'register',
+        nameForSms: name ?? this.msg91.defaultShopName(),
+      });
       return { sent: true, message: 'OTP sent to your phone' };
     } catch (err) {
-      if (err instanceof BadRequestException || err instanceof ConflictException) {
+      if (
+        err instanceof BadRequestException ||
+        err instanceof ConflictException ||
+        err instanceof UnauthorizedException ||
+        (err instanceof HttpException && err.getStatus() === HttpStatus.TOO_MANY_REQUESTS)
+      ) {
         throw err;
       }
       if (err instanceof ServiceUnavailableException) {
@@ -87,16 +100,17 @@ export class AuthService {
 
   async sendLoginOtp(phone: string): Promise<OtpSentResponseDto> {
     try {
-      const user = await this.prisma.user.findUnique({ where: { phone } });
-      if (!user) {
-        throw new UnauthorizedException('Invalid phone or password');
-      }
-      const code = this.generateOtp();
-      await this.saveOtp(phone, code);
-      await this.deliverOtpSms(phone, code, user.name ?? this.msg91.defaultShopName());
+      await this.sendOtpSmsWithThrottle({
+        phone,
+        purpose: 'login',
+        nameForSms: this.msg91.defaultShopName(),
+      });
       return { sent: true, message: 'OTP sent to your phone' };
     } catch (err) {
-      if (err instanceof UnauthorizedException || err instanceof ServiceUnavailableException) {
+      if (
+        err instanceof ServiceUnavailableException ||
+        (err instanceof HttpException && err.getStatus() === HttpStatus.TOO_MANY_REQUESTS)
+      ) {
         throw err;
       }
       if (this.isDbUnavailableError(err)) {
@@ -113,18 +127,36 @@ export class AuthService {
     }
 
     try {
+      if (otp) {
+        const consumed = await this.consumeOtp(phone, otp, 'login');
+        if (!consumed) {
+          throw new UnauthorizedException('Invalid or expired OTP');
+        }
+        let user = await this.prisma.user.findUnique({ where: { phone } });
+        if (!user) {
+          try {
+            user = await this.prisma.user.create({ data: { phone } });
+          } catch (err) {
+            if (this.isPrismaUniqueViolation(err)) {
+              user = await this.prisma.user.findUnique({ where: { phone } });
+            } else {
+              throw err;
+            }
+          }
+        }
+        if (!user) {
+          throw new InternalServerErrorException('Could not create or load user');
+        }
+        const tokens = await this.buildTokens(user.id, user.phone);
+        return { ...tokens, user: this.toUserResponse(user) };
+      }
+
       const user = await this.prisma.user.findUnique({ where: { phone } });
       if (!user) {
         throw new UnauthorizedException('Invalid phone or password');
       }
 
-      if (otp) {
-        const valid = await this.verifyOtp(phone, otp);
-        if (!valid) {
-          throw new UnauthorizedException('Invalid or expired OTP');
-        }
-        await this.deleteOtp(phone);
-      } else if (password && user.passwordHash) {
+      if (password && user.passwordHash) {
         const match = await bcrypt.compare(password, user.passwordHash);
         if (!match) {
           throw new UnauthorizedException('Invalid phone or password');
@@ -136,7 +168,11 @@ export class AuthService {
       const tokens = await this.buildTokens(user.id, user.phone);
       return { ...tokens, user: this.toUserResponse(user) };
     } catch (err) {
-      if (err instanceof UnauthorizedException || err instanceof BadRequestException) {
+      if (
+        err instanceof UnauthorizedException ||
+        err instanceof BadRequestException ||
+        err instanceof InternalServerErrorException
+      ) {
         throw err;
       }
       if (this.isDbUnavailableError(err)) {
@@ -147,6 +183,38 @@ export class AuthService {
   }
 
   async loginOwner(dto: LoginDto): Promise<AuthResponseDto> {
+    const { phone, password, otp } = dto;
+    if (!password && !otp) {
+      throw new BadRequestException('Provide either password or OTP');
+    }
+
+    if (otp) {
+      try {
+        const user = await this.prisma.user.findUnique({ where: { phone } });
+        if (!user || user.role !== 'owner') {
+          throw new UnauthorizedException('Owner credentials required');
+        }
+        const consumed = await this.consumeOtp(phone, otp, 'login');
+        if (!consumed) {
+          throw new UnauthorizedException('Invalid or expired OTP');
+        }
+        const tokens = await this.buildTokens(user.id, user.phone);
+        return { ...tokens, user: this.toUserResponse(user) };
+      } catch (err) {
+        if (
+          err instanceof UnauthorizedException ||
+          err instanceof BadRequestException ||
+          err instanceof InternalServerErrorException
+        ) {
+          throw err;
+        }
+        if (this.isDbUnavailableError(err)) {
+          throw new ServiceUnavailableException(DB_UNAVAILABLE_MSG);
+        }
+        throw err;
+      }
+    }
+
     const response = await this.login(dto);
     if (response.user?.role !== 'owner') {
       throw new UnauthorizedException('Owner credentials required');
@@ -201,35 +269,48 @@ export class AuthService {
   }
 
   async registerOwner(dto: RegisterOwnerDto, ownerSecretFromHeader: string): Promise<AuthResponseDto> {
-    const existingOwner = await this.prisma.user.findFirst({
-      where: { role: 'owner' },
-    });
-    if (existingOwner) {
-      throw new BadRequestException('Owner already registered');
-    }
-
-    const secret = this.config.get<string>('OWNER_SECRET')?.trim();
-    if (secret) {
-      if (!ownerSecretFromHeader || ownerSecretFromHeader !== secret) {
-        throw new UnauthorizedException('Invalid or missing X-Owner-Secret header');
+    try {
+      const existingOwner = await this.prisma.user.findFirst({
+        where: { role: 'owner' },
+      });
+      if (existingOwner) {
+        throw new BadRequestException('Owner already registered');
       }
+
+      const secret = this.config.get<string>('OWNER_SECRET')?.trim();
+      if (secret) {
+        if (!ownerSecretFromHeader || ownerSecretFromHeader !== secret) {
+          throw new UnauthorizedException('Invalid or missing X-Owner-Secret header');
+        }
+      }
+      const existing = await this.prisma.user.findUnique({ where: { phone: dto.phone } });
+      if (existing) {
+        throw new ConflictException('User already registered with this phone');
+      }
+      const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
+      const user = await this.prisma.user.create({
+        data: {
+          phone: dto.phone,
+          name: dto.name,
+          passwordHash,
+          role: 'owner',
+        },
+      });
+      const tokens = await this.buildTokens(user.id, user.phone);
+      return { ...tokens, user: this.toUserResponse(user) };
+    } catch (err) {
+      if (
+        err instanceof BadRequestException ||
+        err instanceof UnauthorizedException ||
+        err instanceof ConflictException
+      ) {
+        throw err;
+      }
+      if (this.isDbUnavailableError(err)) {
+        throw new ServiceUnavailableException(DB_UNAVAILABLE_MSG);
+      }
+      throw err;
     }
-    // When OWNER_SECRET is unset/empty, first owner can register with body only (dev/simple setup).
-    const existing = await this.prisma.user.findUnique({ where: { phone: dto.phone } });
-    if (existing) {
-      throw new ConflictException('User already registered with this phone');
-    }
-    const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
-    const user = await this.prisma.user.create({
-      data: {
-        phone: dto.phone,
-        name: dto.name,
-        passwordHash,
-        role: 'owner',
-      },
-    });
-    const tokens = await this.buildTokens(user.id, user.phone);
-    return { ...tokens, user: this.toUserResponse(user) };
   }
 
   async logout(refreshToken: string): Promise<{ success: boolean }> {
@@ -316,8 +397,8 @@ export class AuthService {
     const accessExpires = this.config.get<string>('JWT_ACCESS_EXPIRES') ?? '15m';
     const refreshExpires = this.config.get<string>('JWT_REFRESH_EXPIRES') ?? '7d';
 
-    const accessExpiresSec = this.parseExpiresToSeconds(accessExpires);
-    const refreshExpiresSec = this.parseExpiresToSeconds(refreshExpires);
+    const accessExpiresSec = parseExpiresToSeconds(accessExpires);
+    const refreshExpiresSec = parseExpiresToSeconds(refreshExpires);
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(
         { sub: userId, phone },
@@ -336,37 +417,25 @@ export class AuthService {
       data: {
         userId,
         token: refreshToken,
-        expiresAt: this.refreshExpiryToDate(refreshExpires),
+        expiresAt: refreshExpiryToDate(refreshExpires),
       },
     });
+    await this.pruneRefreshTokensBeyondCap(userId);
 
     return { accessToken, refreshToken, expiresIn };
   }
 
-  private parseExpiresToSeconds(expires: string): number {
-    const match = expires.match(/^(\d+)([dhm])$/);
-    if (!match) return 900;
-    const [, n, unit] = match;
-    const num = parseInt(n, 10);
-    const multipliers: Record<string, number> = {
-      d: 24 * 60 * 60,
-      h: 60 * 60,
-      m: 60,
-    };
-    return num * (multipliers[unit] ?? 60);
-  }
-
-  private refreshExpiryToDate(expires: string): Date {
-    const match = expires.match(/^(\d+)([dhm])$/);
-    if (!match) return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-    const [, n, unit] = match;
-    const num = parseInt(n, 10);
-    const multipliers: Record<string, number> = {
-      d: 24 * 60 * 60 * 1000,
-      h: 60 * 60 * 1000,
-      m: 60 * 1000,
-    };
-    return new Date(Date.now() + num * (multipliers[unit] ?? 86400000));
+  private async pruneRefreshTokensBeyondCap(userId: string): Promise<void> {
+    const excess = await this.prisma.refreshToken.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      skip: MAX_REFRESH_SESSIONS_PER_USER,
+      select: { id: true },
+    });
+    if (excess.length === 0) return;
+    await this.prisma.refreshToken.deleteMany({
+      where: { id: { in: excess.map((e) => e.id) } },
+    });
   }
 
   private async validateRefreshToken(token: string): Promise<{ sub: string }> {
@@ -390,44 +459,97 @@ export class AuthService {
   private generateOtp(): string {
     let code = '';
     for (let i = 0; i < OTP_LENGTH; i++) {
-      code += Math.floor(Math.random() * 10).toString();
+      code += randomInt(0, 10).toString();
     }
     return code;
   }
 
-  private async saveOtp(phone: string, code: string): Promise<void> {
+  private async assertOtpSendAllowed(phone: string): Promise<void> {
+    const now = Date.now();
+    const cooldownCutoff = new Date(now - OTP_SEND_COOLDOWN_MS);
+    const recent = await this.prisma.otpSendLog.findFirst({
+      where: { phone, sentAt: { gte: cooldownCutoff } },
+      orderBy: { sentAt: 'desc' },
+    });
+    if (recent) {
+      const retryAfterSec = Math.ceil(
+        (recent.sentAt.getTime() + OTP_SEND_COOLDOWN_MS - now) / 1000,
+      );
+      throw new HttpException(
+        `Please wait ${Math.max(1, retryAfterSec)} seconds before requesting another OTP.`,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    const hourAgo = new Date(now - 60 * 60 * 1000);
+    const hourlyCount = await this.prisma.otpSendLog.count({
+      where: { phone, sentAt: { gte: hourAgo } },
+    });
+    if (hourlyCount >= OTP_SEND_MAX_PER_HOUR) {
+      throw new HttpException(
+        'Too many OTP requests for this phone. Try again later.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
+
+  private async sendOtpSmsWithThrottle(args: {
+    phone: string;
+    purpose: OtpPurpose;
+    nameForSms: string;
+  }): Promise<void> {
+    await this.assertOtpSendAllowed(args.phone);
+    const code = this.generateOtp();
+    await this.saveOtp(args.phone, code, args.purpose);
+    try {
+      await this.deliverOtpSms(args.phone, code, args.nameForSms);
+    } catch (err) {
+      await this.deleteOtp(args.phone, args.purpose);
+      throw err;
+    }
+    await this.prisma.otpSendLog.create({ data: { phone: args.phone } });
+  }
+
+  private async saveOtp(phone: string, code: string, purpose: OtpPurpose): Promise<void> {
     const ttlSec = OTP_EXPIRY_MINUTES * 60;
     if (this.redis.isEnabled()) {
-      await this.redis.setOtp(phone, code, ttlSec);
-      return;
+      const ok = await this.redis.setOtp(phone, code, ttlSec, purpose);
+      if (ok) return;
+      this.logger.warn('Redis OTP write did not complete; persisting OTP in the database');
     }
-    await this.prisma.otpVerification.deleteMany({ where: { phone } });
+    await this.prisma.otpVerification.deleteMany({ where: { phone, purpose } });
     await this.prisma.otpVerification.create({
       data: {
         phone,
+        purpose,
         code,
         expiresAt: new Date(Date.now() + ttlSec * 1000),
       },
     });
   }
 
-  private async verifyOtp(phone: string, code: string): Promise<boolean> {
+  /** Validates OTP and consumes it in one step (prevents parallel reuse). */
+  private async consumeOtp(phone: string, code: string, purpose: OtpPurpose): Promise<boolean> {
     if (this.redis.isEnabled()) {
-      return this.redis.verifyOtp(phone, code);
+      const fromRedis = await this.redis.consumeOtpIfMatch(phone, code, purpose);
+      if (fromRedis) return true;
     }
-    const record = await this.prisma.otpVerification.findFirst({
-      where: { phone, code },
-      orderBy: { createdAt: 'desc' },
+    const now = new Date();
+    const deleted = await this.prisma.otpVerification.deleteMany({
+      where: { phone, purpose, code, expiresAt: { gt: now } },
     });
-    return !!record && record.expiresAt > new Date();
+    return deleted.count === 1;
   }
 
-  private async deleteOtp(phone: string): Promise<void> {
+  private async deleteOtp(phone: string, purpose: OtpPurpose): Promise<void> {
     if (this.redis.isEnabled()) {
-      await this.redis.deleteOtp(phone);
+      await this.redis.deleteOtp(phone, purpose);
       return;
     }
-    await this.prisma.otpVerification.deleteMany({ where: { phone } });
+    await this.prisma.otpVerification.deleteMany({ where: { phone, purpose } });
+  }
+
+  private isPrismaUniqueViolation(err: unknown): boolean {
+    return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
   }
 
   private isDbUnavailableError(err: unknown): boolean {
