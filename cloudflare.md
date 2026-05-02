@@ -9,11 +9,23 @@
    - `npx wrangler secret put CORS_ORIGINS` — must list **every browser origin** that calls the API (e.g. `https://www.neerbottle.in,https://neerbottle.in`). Apex and `www` are different origins; omitting one causes CORS preflight failures in the browser.
    - (SMS OTP) `npx wrangler secret put MSG91_AUTH_KEY` — optional vars: `MSG91_TEMPLATE_ID`, `MSG91_OTP_SHOP_NAME` (see `.env.example`)
 3. Deploy:
-   - `npm run cf:deploy` (or `npx wrangler deploy --containers-rollout=immediate`)
+   - `npm run cf:deploy` (uses `keep_vars` in `wrangler.jsonc` and `--keep-vars` / `--containers-rollout=immediate` on the CLI)
 4. Validate:
    - `npx wrangler containers list`
    - `curl -sS https://<your-worker-domain>/api/health/ping`
 # Hosting `fliq-water-backend` on Cloudflare Containers (2026)
+
+## Git-connected deploy: bindings disappearing / “Database is not available”
+
+Wrangler treats **`wrangler.jsonc` as the source of truth for plaintext `vars`**. On **`wrangler deploy`**, any **plaintext** variable you set only in the dashboard is **removed** unless you set **`keep_vars: true`** (this repo does) or pass **`--keep-vars`**.
+
+- **Secrets** (`wrangler secret put` / dashboard “Secret”) are **not** supposed to be deleted on deploy unless you run `wrangler secret delete` or you add a **`vars` entry with the same name** as the secret (even an empty string) — that **replaces** the secret with the var value. **Never** add `DATABASE_URL`, `JWT_*`, etc. under `vars` in git.
+
+- **`npx wrangler versions upload`** (Workers “Version command” in the dashboard) has had **bugs where bindings are cleared** or `keep_vars` is ignored for preview uploads. If secrets or vars vanish after pushes, try: use **`npx wrangler deploy` only** for the deploy step (this repo’s `npm run cf:deploy`), or upgrade Wrangler to a release that includes fixes for `versions upload` + `keep_vars`. After a bad upload, re-add secrets once in the dashboard or via `wrangler secret put`.
+
+This repo sets **`"keep_vars": true`** in `wrangler.jsonc` so dashboard-managed plaintext vars survive Git deploys. The Nest error *Database is not available…* means **`DATABASE_URL` is missing or empty inside the container** (Worker → `ApiContainer` `envVars`), not a Prisma bug.
+
+---
 
 This repo is a **NestJS (TypeScript) + Prisma + PostgreSQL (Supabase)** backend with **Socket.IO** real-time features (namespace **`/orders`**). It listens on `process.env.PORT ?? 3000`.
 
