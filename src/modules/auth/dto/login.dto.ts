@@ -24,7 +24,7 @@ export class LoginDto {
   @ApiPropertyOptional({
     example: '123456',
     description:
-      'OTP verification: 6 digits from SMS after `POST /api/auth/send-login-otp`. On success, session is issued and a customer `User` is created if this phone was new.',
+      'Storefront OTP: 6 digits from SMS after `POST /api/auth/send-login-otp`. On success, a **customer-scoped** session is issued for any existing `User` role; a new `User` is created as `customer` if the phone was unknown.',
   })
   @ValidateIf((o) => !o.password)
   @IsString()

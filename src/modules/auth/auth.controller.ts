@@ -74,10 +74,11 @@ export class AuthController {
   @Post('send-login-otp')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Request OTP before login (any customer phone)',
+    summary: 'Request OTP before storefront login (any phone / any role)',
     description: [
       'Sends a **6-digit OTP** via SMS (MSG91) for the given **10-digit** `phone`.',
-      '**Does not** query or require an existing user — same flow for new and returning phones. The SMS `##name##` placeholder uses `MSG91_OTP_SHOP_NAME` (default shop name), not the user profile.',
+      '**No role check** — works for phones tied to `customer`, `owner`, `admin`, or `deliveryPartner` users, and for phones not yet in the database.',
+      '**Does not** require a specific account type. The SMS `##name##` placeholder uses `MSG91_OTP_SHOP_NAME` (default shop name), not the user profile.',
       '',
       '**Request:**',
       '```json',
@@ -118,7 +119,7 @@ export class AuthController {
       '### Password login',
       'Body: `{ "phone": "9876543210", "password": "yourpassword" }` — user must already exist with a password set.',
       '',
-      '### OTP login (customer phone; **this is the OTP verification API**)',
+      '### OTP login (storefront; **any user role** — **this is the OTP verification API**)',
       '**Prerequisite:** call **`POST /api/auth/send-login-otp`** with `{ "phone": "9876543210" }` so an OTP is sent to the phone.',
       '',
       '**Verify and sign in:** `POST /api/auth/login` with:',
@@ -130,13 +131,13 @@ export class AuthController {
       '- Checks the OTP for that `phone` (10 digits, same as send step).',
       '- If OTP is wrong or expired → **401** `Invalid or expired OTP`.',
       '- If OTP is valid → OTP is consumed, then **`User` is loaded or created** by `phone` (creates a **customer** with phone only if new; existing row unchanged except `updatedAt`).',
-      '- **Customer storefront OTP session:** response `user` is always `{ ..., role: "customer" }` (no `permissions`). Access/refresh JWTs include `customerOtpSession: true`; **`POST /auth/refresh`** keeps that scope so `req.user.role` stays `customer` until the session ends.',
+      '- **Storefront OTP session (all roles):** whoever verifies (`owner` / `admin` / `deliveryPartner` / `customer`) gets the same **customer-scoped** session: response `user` is always `{ ..., role: "customer" }` (no `permissions`). JWTs include `customerOtpSession: true`; **`POST /auth/refresh`** keeps that scope so `req.user.role` stays `customer` until the session ends.',
       '',
       '- **Password login** returns the real DB `role` and optional `permissions` for admins; JWTs do not set `customerOtpSession`.',
       '',
       '**Do not** send both `password` and `otp` in one request (validation requires one or the other).',
       '',
-      'Staff dashboards: owners use **`POST /auth/login-owner`**; delivery partners use **`POST /auth/login-delivery-partner`** (password only).',
+      'For **privileged** sessions (real `role` and admin `permissions` in JWT), use **`POST /auth/login-owner`** (owner) or **`POST /auth/login-delivery-partner`** (partner, password).',
     ].join('\n'),
   })
   @ApiOkResponse({

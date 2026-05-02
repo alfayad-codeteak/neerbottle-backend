@@ -98,6 +98,7 @@ export class AuthService {
     }
   }
 
+  /** Storefront magic link: no DB role check — any phone may request OTP. */
   async sendLoginOtp(phone: string): Promise<OtpSentResponseDto> {
     try {
       await this.sendOtpSmsWithThrottle({
