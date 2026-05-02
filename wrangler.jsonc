@@ -10,6 +10,10 @@
 
   "containers": [
     {
+      // Stable id: must match the first-provisioned container app on this DO namespace.
+      // Renaming the Worker alone would default to neerbottle-backend-apicontainer and fail with
+      // DURABLE_OBJECT_ALREADY_HAS_APPLICATION (old name fliq-water-backend-apicontainer).
+      "name": "fliq-water-backend-apicontainer",
       "class_name": "ApiContainer",
       "image": "./Dockerfile",
       "max_instances": 3

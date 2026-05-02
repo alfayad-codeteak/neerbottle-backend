@@ -452,6 +452,9 @@ Practical tips for this app (moderate traffic + realtime):
 - **404 on a new Nest route (e.g. `/api/auth/send-login-otp`) after dashboard changes**
   - Adding **secrets/vars only** in the Cloudflare dashboard does **not** rebuild the **container image**. The Nest app lives inside the image built from `./Dockerfile`.
   - Fix: deploy from CI or locally with `npx wrangler deploy` after merging the code change so Wrangler **builds and pushes a new image** that includes the new routes.
+- **`DURABLE_OBJECT_ALREADY_HAS_APPLICATION` / `name fliq-water-backend-apicontainer` on deploy**
+  - The **container application id** is tied to your account’s first deploy. If you **rename the Worker** in `wrangler.jsonc`, Wrangler defaults to a **new** container name (`<new-worker>-apicontainer`), which conflicts with the existing Durable Object binding.
+  - Fix: set an explicit stable `"name"` on the `containers[]` entry (this repo uses `"fliq-water-backend-apicontainer"`) so the Worker can be renamed while updates still target the same container app. See Cloudflare Wrangler docs: optional `name` under **Containers**.
 - **Provisioning delay after first deploy**
   - Wait a few minutes; containers are provisioned after Worker deploy
 - **Prisma issues**
