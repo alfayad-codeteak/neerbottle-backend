@@ -79,6 +79,19 @@ export class DeliveryPartnersController {
     return this.ordersService.findOrdersForDeliveryPartner(req.user.id);
   }
 
+  @Get('my-order-history')
+  @UseGuards(JwtAuthGuard, DeliveryPartnerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Order history (past deliveries)',
+    description:
+      'Orders assigned to this partner that are finished (`deliveryStatus: CANS_RETURNED`) or `CANCELLED`. Same payload shape as `GET /delivery-partners/my-orders`. Use `my-orders` for active assignments.',
+  })
+  @ApiOkResponse({ type: OrderResponseDto, isArray: true })
+  myOrderHistory(@Req() req: RequestWithUser) {
+    return this.ordersService.findDeliveryPartnerOrderHistory(req.user.id);
+  }
+
   @Patch('orders/:orderId/delivery-status')
   @UseGuards(JwtAuthGuard, DeliveryPartnerGuard)
   @ApiBearerAuth()

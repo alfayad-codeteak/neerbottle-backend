@@ -264,6 +264,21 @@ export class OrdersService {
     return orders.map((o) => this.toOrderResponse(o, true));
   }
 
+  /** Past deliveries: cans returned, or cancelled while still assigned to this partner. */
+  async findDeliveryPartnerOrderHistory(userId: string) {
+    const partner = await this.prisma.deliveryPartner.findUnique({ where: { userId } });
+    if (!partner) throw new NotFoundException('Delivery partner not found');
+    const orders = await this.prisma.order.findMany({
+      where: {
+        deliveryPartnerId: partner.id,
+        OR: [{ deliveryStatus: 'CANS_RETURNED' }, { status: 'CANCELLED' }],
+      },
+      include: orderFullInclude,
+      orderBy: { updatedAt: 'desc' },
+    });
+    return orders.map((o) => this.toOrderResponse(o, true));
+  }
+
   async partnerUpdateDeliveryStatus(
     partnerUserId: string,
     orderId: string,
