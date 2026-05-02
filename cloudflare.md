@@ -9,7 +9,7 @@
    - `npx wrangler secret put CORS_ORIGINS`
    - (SMS OTP) `npx wrangler secret put MSG91_AUTH_KEY` — optional vars: `MSG91_TEMPLATE_ID`, `MSG91_OTP_SHOP_NAME` (see `.env.example`)
 3. Deploy:
-   - `npx wrangler deploy`
+   - `npm run cf:deploy` (or `npx wrangler deploy --containers-rollout=immediate`)
 4. Validate:
    - `npx wrangler containers list`
    - `curl -sS https://<your-worker-domain>/api/health/ping`
@@ -311,6 +311,8 @@ Deploy:
 ```bash
 npx wrangler deploy
 ```
+
+For **Containers**, default rollout can leave some instances on an older image for a while. This repo’s `npm run cf:deploy` uses `--containers-rollout=immediate` so every instance picks up the new image in one step (matches typical CI expectations).
 
 What happens (per Cloudflare Containers docs):
 - Docker image builds locally
