@@ -130,11 +130,13 @@ export class AuthController {
       '- Checks the OTP for that `phone` (10 digits, same as send step).',
       '- If OTP is wrong or expired → **401** `Invalid or expired OTP`.',
       '- If OTP is valid → OTP is consumed, then **`User` is loaded or created** by `phone` (creates a **customer** with phone only if new; existing row unchanged except `updatedAt`).',
-      '- Returns **`AuthResponseDto`**: `accessToken`, `refreshToken`, `expiresIn`, `user` (`id`, `phone`, `name`, `role`, optional `permissions` for admins).',
+      '- **Customer storefront OTP session:** response `user` is always `{ ..., role: "customer" }` (no `permissions`). Access/refresh JWTs include `customerOtpSession: true`; **`POST /auth/refresh`** keeps that scope so `req.user.role` stays `customer` until the session ends.',
+      '',
+      '- **Password login** returns the real DB `role` and optional `permissions` for admins; JWTs do not set `customerOtpSession`.',
       '',
       '**Do not** send both `password` and `otp` in one request (validation requires one or the other).',
       '',
-      'Staff/owner/admin use the same endpoint; **`POST /auth/login-owner`** restricts to `role === owner`. Delivery partners should use **`POST /auth/login-delivery-partner`** (password only).',
+      'Staff dashboards: owners use **`POST /auth/login-owner`**; delivery partners use **`POST /auth/login-delivery-partner`** (password only).',
     ].join('\n'),
   })
   @ApiOkResponse({

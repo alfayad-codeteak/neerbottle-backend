@@ -147,8 +147,8 @@ export class AuthService {
         if (!user) {
           throw new InternalServerErrorException('Could not create or load user');
         }
-        const tokens = await this.buildTokens(user.id, user.phone);
-        return { ...tokens, user: this.toUserResponse(user) };
+        const tokens = await this.buildTokens(user.id, user.phone, { customerOtpSession: true });
+        return { ...tokens, user: this.toCustomerAppOtpLoginUser(user) };
       }
 
       const user = await this.prisma.user.findUnique({ where: { phone } });
@@ -320,7 +320,7 @@ export class AuthService {
 
   async refresh(refreshToken: string): Promise<AuthResponseDto> {
     try {
-      await this.validateRefreshToken(refreshToken);
+      const payload = await this.validateRefreshToken(refreshToken);
 
       const stored = await this.prisma.refreshToken.findUnique({
         where: { token: refreshToken },
@@ -339,8 +339,13 @@ export class AuthService {
         throw new UnauthorizedException('Invalid or expired refresh token');
       }
 
-      const tokens = await this.buildTokens(stored.user.id, stored.user.phone);
-      return { ...tokens, user: this.toUserResponse(stored.user) };
+      const tokens = await this.buildTokens(stored.user.id, stored.user.phone, {
+        customerOtpSession: !!payload.customerOtpSession,
+      });
+      const userOut = payload.customerOtpSession
+        ? this.toCustomerAppOtpLoginUser(stored.user)
+        : this.toUserResponse(stored.user);
+      return { ...tokens, user: userOut };
     } catch (err) {
       if (err instanceof UnauthorizedException) {
         throw err;
@@ -360,6 +365,16 @@ export class AuthService {
       name: user.name,
       role: user.role,
       ...(permissions.length > 0 && { permissions }),
+    };
+  }
+
+  /** Customer storefront OTP login: response always `role: customer` (no `permissions`). */
+  private toCustomerAppOtpLoginUser(user: { id: string; phone: string; name: string | null }): AuthResponseDto['user'] {
+    return {
+      id: user.id,
+      phone: user.phone,
+      name: user.name,
+      role: 'customer',
     };
   }
 
@@ -391,7 +406,11 @@ export class AuthService {
     };
   }
 
-  private async buildTokens(userId: string, phone: string): Promise<Omit<AuthResponseDto, 'user'>> {
+  private async buildTokens(
+    userId: string,
+    phone: string,
+    opts?: { customerOtpSession?: boolean },
+  ): Promise<Omit<AuthResponseDto, 'user'>> {
     const accessSecret = secretFromConfig(this.config, 'JWT_ACCESS_SECRET', 'access-secret-change-me');
     const refreshSecret = secretFromConfig(this.config, 'JWT_REFRESH_SECRET', 'refresh-secret-change-me');
     const accessExpires = this.config.get<string>('JWT_ACCESS_EXPIRES') ?? '15m';
@@ -399,15 +418,14 @@ export class AuthService {
 
     const accessExpiresSec = parseExpiresToSeconds(accessExpires);
     const refreshExpiresSec = parseExpiresToSeconds(refreshExpires);
+    const claims = {
+      sub: userId,
+      phone,
+      ...(opts?.customerOtpSession ? { customerOtpSession: true as const } : {}),
+    };
     const [accessToken, refreshToken] = await Promise.all([
-      this.jwtService.signAsync(
-        { sub: userId, phone },
-        { secret: accessSecret, expiresIn: accessExpiresSec },
-      ),
-      this.jwtService.signAsync(
-        { sub: userId, phone },
-        { secret: refreshSecret, expiresIn: refreshExpiresSec },
-      ),
+      this.jwtService.signAsync(claims, { secret: accessSecret, expiresIn: accessExpiresSec }),
+      this.jwtService.signAsync(claims, { secret: refreshSecret, expiresIn: refreshExpiresSec }),
     ]);
 
     const decoded = this.jwtService.decode(accessToken) as { exp: number; iat: number };
@@ -438,10 +456,18 @@ export class AuthService {
     });
   }
 
-  private async validateRefreshToken(token: string): Promise<{ sub: string }> {
+  private async validateRefreshToken(token: string): Promise<{
+    sub: string;
+    phone: string;
+    customerOtpSession?: boolean;
+  }> {
     const refreshSecret = secretFromConfig(this.config, 'JWT_REFRESH_SECRET', 'refresh-secret-change-me');
     try {
-      return await this.jwtService.verifyAsync<{ sub: string }>(token, {
+      return await this.jwtService.verifyAsync<{
+        sub: string;
+        phone: string;
+        customerOtpSession?: boolean;
+      }>(token, {
         secret: refreshSecret,
       });
     } catch {

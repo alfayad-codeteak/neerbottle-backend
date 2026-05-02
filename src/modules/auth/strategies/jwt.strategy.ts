@@ -5,7 +5,7 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { secretFromConfig } from '../../../config/secret-from-env';
 
-export type JwtPayload = { sub: string; phone: string };
+export type JwtPayload = { sub: string; phone: string; customerOtpSession?: boolean };
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
@@ -27,7 +27,13 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     if (!user) {
       throw new UnauthorizedException();
     }
-    const permissions = Array.isArray(user.permissions) ? (user.permissions as string[]) : [];
-    return { id: user.id, phone: user.phone, role: user.role, permissions };
+    const customerOtpSession = !!payload.customerOtpSession;
+    const permissions = customerOtpSession
+      ? []
+      : Array.isArray(user.permissions)
+        ? (user.permissions as string[])
+        : [];
+    const role = customerOtpSession ? 'customer' : user.role;
+    return { id: user.id, phone: user.phone, role, permissions };
   }
 }
