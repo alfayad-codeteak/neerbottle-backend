@@ -27,6 +27,35 @@ model User {
   depositWallet UserDepositWallet?
   depositTransactions DepositTransaction[]
   deliveryPartner DeliveryPartner?
+  pushTokens   PushToken[]
+}
+
+model PushToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  platform  String   // android | ios | web
+  deviceId  String?
+  lastSeenAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model DeliveryZone {
+  id        String   @id @default(cuid())
+  name      String
+  centerLat Decimal  @db.Decimal(10, 7)
+  centerLng Decimal  @db.Decimal(10, 7)
+  radiusKm  Decimal  @db.Decimal(10, 2)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([createdAt])
 }
 
 // ---- Addresses ----

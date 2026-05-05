@@ -11,6 +11,8 @@ import { OrdersModule } from './modules/orders/orders.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { DepositsModule } from './modules/deposits/deposits.module';
 import { DeliveryPartnersModule } from './modules/delivery-partners/delivery-partners.module';
+import { PushModule } from './modules/push/push.module';
+import { DeliveryZonesModule } from './modules/delivery-zones/delivery-zones.module';
 
 @Module({
   imports: [
@@ -29,6 +31,8 @@ import { DeliveryPartnersModule } from './modules/delivery-partners/delivery-par
     CustomersModule,
     DepositsModule,
     DeliveryPartnersModule,
+    PushModule,
+    DeliveryZonesModule,
   ],
 })
 export class AppModule {}

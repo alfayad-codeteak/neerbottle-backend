@@ -42,3 +42,7 @@ src/generated/prisma/
 !README.md
 !docker.md
 !cloudflare.md
+!fcm.md
+
+# Firebase Admin SDK keys (never commit)
+*-firebase-adminsdk-*.json

@@ -11,6 +11,7 @@ import { STATUS_FLOW, OrderStatus } from './orders.constants';
 import { nextDeliveryStatus } from './delivery.constants';
 import { DepositsService } from '../deposits/deposits.service';
 import { OrdersGateway } from './orders.gateway';
+import { PushService } from '../push/push.service';
 
 const orderFullInclude = {
   items: { include: { product: true } },
@@ -25,6 +26,7 @@ export class OrdersService {
     private readonly prisma: PrismaService,
     private readonly depositsService: DepositsService,
     private readonly ordersGateway: OrdersGateway,
+    private readonly pushService: PushService,
   ) {}
 
   async create(userId: string, dto: CreateOrderDto) {
@@ -357,6 +359,15 @@ export class OrdersService {
       deliveryPartnerUserId: order.deliveryPartner?.userId ?? undefined,
     };
     this.ordersGateway.emitOrderUpdate(body as Record<string, unknown>);
+
+    // Push notification for customer devices (FCM).
+    // Socket.IO covers foreground live updates; FCM covers background/killed apps.
+    await this.pushService.notifyOrderUpdated({
+      userId: order.userId,
+      orderId: order.id,
+      status: order.status,
+      deliveryStatus: order.deliveryStatus ?? undefined,
+    });
   }
 
   async updateStatus(orderId: string, status: string) {

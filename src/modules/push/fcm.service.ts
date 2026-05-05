@@ -1,0 +1,110 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { getApps, initializeApp, cert, type App } from 'firebase-admin/app';
+import { getMessaging, type Messaging } from 'firebase-admin/messaging';
+
+type ServiceAccountJson = {
+  project_id?: string;
+  client_email?: string;
+  private_key?: string;
+};
+
+@Injectable()
+export class FcmService {
+  private readonly logger = new Logger(FcmService.name);
+  private app: App | null = null;
+  private messaging: Messaging | null = null;
+
+  constructor(private readonly config: ConfigService) {}
+
+  isEnabled(): boolean {
+    return !!(this.config.get<string>('FCM_SERVICE_ACCOUNT_JSON') || this.config.get<string>('FCM_SERVICE_ACCOUNT_JSON_B64'));
+  }
+
+  private ensureInitialized(): void {
+    if (this.messaging) return;
+
+    if (getApps().length > 0) {
+      // If another module initialized it, reuse the default app.
+      this.app = getApps()[0]!;
+      this.messaging = getMessaging(this.app);
+      return;
+    }
+
+    const jsonRaw = this.config.get<string>('FCM_SERVICE_ACCOUNT_JSON')?.trim();
+    const b64 = this.config.get<string>('FCM_SERVICE_ACCOUNT_JSON_B64')?.trim();
+    const parsed = this.parseServiceAccount(jsonRaw, b64);
+    if (!parsed) {
+      return;
+    }
+
+    this.app = initializeApp({
+      credential: cert(parsed as { projectId: string; clientEmail: string; privateKey: string }),
+    });
+    this.messaging = getMessaging(this.app);
+  }
+
+  private parseServiceAccount(jsonRaw?: string, b64?: string): ServiceAccountJson | null {
+    const source = jsonRaw
+      ? jsonRaw
+      : b64
+        ? Buffer.from(b64, 'base64').toString('utf8')
+        : '';
+    if (!source) return null;
+    try {
+      const obj = JSON.parse(source) as ServiceAccountJson;
+      if (!obj.client_email || !obj.private_key) {
+        this.logger.warn('FCM credentials missing client_email/private_key (FCM disabled).');
+        return null;
+      }
+      // firebase-admin expects real newlines in the private key
+      const privateKey = obj.private_key.includes('\\n') ? obj.private_key.replace(/\\n/g, '\n') : obj.private_key;
+      return { ...obj, private_key: privateKey };
+    } catch (e) {
+      this.logger.warn('Failed to parse FCM service account JSON (FCM disabled).');
+      return null;
+    }
+  }
+
+  async sendToTokens(args: {
+    tokens: string[];
+    title: string;
+    body: string;
+    data?: Record<string, string>;
+  }): Promise<{ successCount: number; failureCount: number; invalidTokens: string[] }> {
+    if (args.tokens.length === 0) {
+      return { successCount: 0, failureCount: 0, invalidTokens: [] };
+    }
+
+    if (!this.isEnabled()) {
+      this.logger.debug(`FCM disabled; would send to ${args.tokens.length} tokens: ${args.title}`);
+      return { successCount: 0, failureCount: 0, invalidTokens: [] };
+    }
+
+    this.ensureInitialized();
+    if (!this.messaging) {
+      return { successCount: 0, failureCount: 0, invalidTokens: [] };
+    }
+
+    const res = await this.messaging.sendEachForMulticast({
+      tokens: args.tokens,
+      notification: { title: args.title, body: args.body },
+      data: args.data,
+    });
+
+    const invalidTokens: string[] = [];
+    res.responses.forEach((r, i) => {
+      if (r.success) return;
+      const code = (r.error as { code?: string } | undefined)?.code ?? '';
+      if (
+        code === 'messaging/registration-token-not-registered' ||
+        code === 'messaging/invalid-registration-token'
+      ) {
+        invalidTokens.push(args.tokens[i]!);
+      }
+    });
+
+    return { successCount: res.successCount, failureCount: res.failureCount, invalidTokens };
+  }
+}
+
