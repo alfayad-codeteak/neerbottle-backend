@@ -363,7 +363,8 @@ export class OrdersService {
     // Push notification for customer devices (FCM).
     // Socket.IO covers foreground live updates; FCM covers background/killed apps.
     await this.pushService.notifyOrderUpdated({
-      userId: order.userId,
+      customerUserId: order.userId,
+      partnerUserId: order.deliveryPartner?.userId ?? undefined,
       orderId: order.id,
       status: order.status,
       deliveryStatus: order.deliveryStatus ?? undefined,

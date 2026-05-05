@@ -37,27 +37,18 @@ export class PushService {
     return { success: true };
   }
 
-  async notifyOrderUpdated(args: { userId: string; orderId: string; status: string; deliveryStatus?: string }) {
+  private async sendToUser(userId: string, msg: { title: string; body: string; data: Record<string, string> }) {
     const tokens = await this.prisma.pushToken.findMany({
-      where: { userId: args.userId },
+      where: { userId },
       select: { token: true },
     });
     const tokenStrings = tokens.map((t) => t.token);
 
-    const title = 'Order update';
-    const body = `Your order status is now ${args.status}`;
-    const data: Record<string, string> = {
-      type: 'order.updated',
-      orderId: args.orderId,
-      status: args.status,
-    };
-    if (args.deliveryStatus) data.deliveryStatus = args.deliveryStatus;
-
     const res = await this.fcm.sendToTokens({
       tokens: tokenStrings,
-      title,
-      body,
-      data,
+      title: msg.title,
+      body: msg.body,
+      data: msg.data,
     });
 
     if (res.invalidTokens.length > 0) {
@@ -65,8 +56,45 @@ export class PushService {
         where: { token: { in: res.invalidTokens } },
       });
     }
-
     return res;
+  }
+
+  async notifyOrderUpdated(args: {
+    customerUserId: string;
+    partnerUserId?: string;
+    orderId: string;
+    status: string;
+    deliveryStatus?: string;
+  }) {
+    const baseData: Record<string, string> = {
+      orderId: args.orderId,
+      status: args.status,
+    };
+    if (args.deliveryStatus) baseData.deliveryStatus = args.deliveryStatus;
+
+    // Customer notification
+    await this.sendToUser(args.customerUserId, {
+      title: 'Order update',
+      body: `Your order status is now ${args.status}`,
+      data: { type: 'order.updated', ...baseData },
+    });
+
+    // Delivery partner notification (when assigned / delivery flow updates)
+    if (args.partnerUserId && args.partnerUserId !== args.customerUserId) {
+      const type =
+        args.deliveryStatus === 'ASSIGNED' ? 'order.assigned' : 'order.updated';
+      const title = args.deliveryStatus === 'ASSIGNED' ? 'New order assigned' : 'Order update';
+      const body =
+        args.deliveryStatus === 'ASSIGNED'
+          ? 'A new order has been assigned to you.'
+          : `Order status is now ${args.status}`;
+
+      await this.sendToUser(args.partnerUserId, {
+        title,
+        body,
+        data: { type, audience: 'deliveryPartner', ...baseData },
+      });
+    }
   }
 }
 
