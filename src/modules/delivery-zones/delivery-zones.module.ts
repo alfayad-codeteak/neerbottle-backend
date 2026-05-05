@@ -3,10 +3,11 @@ import { AuthModule } from '../auth/auth.module';
 import { DeliveryZonesService } from './delivery-zones.service';
 import { AdminDeliveryZonesController } from './admin-delivery-zones.controller';
 import { DeliveryZonesController } from './delivery-zones.controller';
+import { BffAdminDeliveryZonesController } from './bff-admin-delivery-zones.controller';
 
 @Module({
   imports: [AuthModule],
-  controllers: [AdminDeliveryZonesController, DeliveryZonesController],
+  controllers: [AdminDeliveryZonesController, BffAdminDeliveryZonesController, DeliveryZonesController],
   providers: [DeliveryZonesService],
   exports: [DeliveryZonesService],
 })
