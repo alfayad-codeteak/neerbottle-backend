@@ -151,9 +151,12 @@ export class FcmService {
     });
 
     const invalidTokens: string[] = [];
+    const errorCounts: Record<string, number> = {};
     res.responses.forEach((r, i) => {
       if (r.success) return;
       const code = (r.error as { code?: string } | undefined)?.code ?? '';
+      const key = code || 'unknown';
+      errorCounts[key] = (errorCounts[key] ?? 0) + 1;
       if (
         code === 'messaging/registration-token-not-registered' ||
         code === 'messaging/invalid-registration-token'
@@ -161,6 +164,21 @@ export class FcmService {
         invalidTokens.push(args.tokens[i]!);
       }
     });
+
+    if (res.failureCount > 0) {
+      const platform = args.platform ?? 'web';
+      const summary = Object.entries(errorCounts)
+        .sort((a, b) => b[1] - a[1])
+        .map(([k, v]) => `${k}:${v}`)
+        .join(', ');
+      this.logger.warn(
+        `FCM send had failures (platform=${platform}) success=${res.successCount} failure=${res.failureCount} codes=[${summary}]`,
+      );
+    } else {
+      this.logger.debug(
+        `FCM send ok (platform=${args.platform ?? 'web'}) success=${res.successCount} failure=${res.failureCount}`,
+      );
+    }
 
     return { successCount: res.successCount, failureCount: res.failureCount, invalidTokens };
   }
