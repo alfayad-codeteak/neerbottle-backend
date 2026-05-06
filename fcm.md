@@ -320,6 +320,74 @@ If FCM send returns `NotRegistered` / `InvalidRegistration`, backend should dele
 - **Wrong Firebase project**: tokens from Project A won’t receive messages sent from Project B.
 - **Not actually sending to device tokens**: FCM requires actual tokens (or properly managed topics).
 
+---
+
+## 9) Socket.IO real-time (Delivery partner Flutter)
+
+This backend already exposes a Socket.IO namespace for real-time order events:
+
+- **Namespace**: `/orders`
+- **Auth**: JWT access token (same one used for REST)
+- **Rooms**:
+  - `user:<userId>` is auto-joined on connect
+  - `order:<orderId>` can be joined via an event (optional)
+
+### 9.1 Events emitted by backend
+
+- `order.updated`  
+  Emitted for any order change to:
+  - customer room `user:<customerUserId>`
+  - partner room `user:<partnerUserId>` (when assigned)
+  - order room `order:<orderId>` (if anyone joined)
+
+- `order.assigned`  
+  Emitted **only to the delivery partner’s user room** when `deliveryStatus === "ASSIGNED"`.
+
+### 9.2 Events Flutter can emit (optional)
+
+- `order.join` with `{ "orderId": "<uuid>" }` → joins `order:<orderId>`
+- `order.leave` with `{ "orderId": "<uuid>" }` → leaves `order:<orderId>`
+
+### 9.3 Flutter Socket.IO configuration (partner app)
+
+Use `socket_io_client` (example). Connect with the JWT:
+
+```dart
+final socket = io(
+  '$baseUrl/orders',
+  OptionBuilder()
+    .setTransports(['websocket'])
+    .disableAutoConnect()
+    .setAuth({'token': accessToken})
+    .build(),
+);
+
+socket.onConnect((_) => print('connected'));
+socket.onDisconnect((_) => print('disconnected'));
+
+socket.on('order.updated', (payload) {
+  // payload includes orderId, userId, deliveryPartnerUserId, deliveryStatus, status, etc.
+});
+
+socket.on('order.assigned', (payload) {
+  // same payload shape as order.updated, but only on assignment
+  // Navigate to orders tab and open orderId
+});
+
+socket.connect();
+```
+
+### 9.4 Aligning WS + FCM “type”
+
+Recommended mapping on Flutter:
+
+- **WS**:
+  - on `order.assigned` → treat as `type="order.assigned"`
+  - on `order.updated` with `deliveryStatus=="ASSIGNED"` → also treat as assignment (fallback)
+- **FCM**:
+  - read `data.type` (`order.assigned` / `order.updated`)
+  - navigate using `data.orderId`
+
 ## 4) Deployment configuration (secrets)
 
 ### 4.1 Local development

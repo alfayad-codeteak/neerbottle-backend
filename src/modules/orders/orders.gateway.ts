@@ -5,6 +5,9 @@ import {
   WebSocketGateway,
   WebSocketServer,
   OnGatewayConnection,
+  SubscribeMessage,
+  MessageBody,
+  ConnectedSocket,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { secretFromConfig } from '../../config/secret-from-env';
@@ -53,14 +56,45 @@ export class OrdersGateway implements OnGatewayConnection {
     }
   }
 
+  @SubscribeMessage('order.join')
+  async joinOrderRoom(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { orderId?: string },
+  ) {
+    const userId = client.data.userId as string | undefined;
+    if (!userId) return { ok: false, error: 'unauthorized' };
+    const orderId = typeof body?.orderId === 'string' ? body.orderId : '';
+    if (!orderId) return { ok: false, error: 'missing_orderId' };
+    await client.join(`order:${orderId}`);
+    return { ok: true };
+  }
+
+  @SubscribeMessage('order.leave')
+  async leaveOrderRoom(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { orderId?: string },
+  ) {
+    const userId = client.data.userId as string | undefined;
+    if (!userId) return { ok: false, error: 'unauthorized' };
+    const orderId = typeof body?.orderId === 'string' ? body.orderId : '';
+    if (!orderId) return { ok: false, error: 'missing_orderId' };
+    await client.leave(`order:${orderId}`);
+    return { ok: true };
+  }
+
   emitOrderUpdate(payload: Record<string, unknown>) {
     if (!this.server) return;
     const userId = payload.userId as string;
     const partnerUserId = payload.deliveryPartnerUserId as string | undefined;
     const orderId = payload.orderId as string;
+    const deliveryStatus = payload.deliveryStatus as string | undefined;
+
     this.server.to(`user:${userId}`).emit('order.updated', payload);
     if (partnerUserId && partnerUserId !== userId) {
       this.server.to(`user:${partnerUserId}`).emit('order.updated', payload);
+      if (deliveryStatus === 'ASSIGNED') {
+        this.server.to(`user:${partnerUserId}`).emit('order.assigned', payload);
+      }
     }
     if (orderId) {
       this.server.to(`order:${orderId}`).emit('order.updated', payload);
