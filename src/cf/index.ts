@@ -98,6 +98,10 @@ export class ApiContainer extends Container {
       MSG91_AUTH_KEY: pick('MSG91_AUTH_KEY') ?? '',
       MSG91_TEMPLATE_ID: pick('MSG91_TEMPLATE_ID') ?? '',
       MSG91_OTP_SHOP_NAME: pick('MSG91_OTP_SHOP_NAME') ?? '',
+      // Push notifications (FCM) – must be passed through to the container runtime.
+      FCM_SERVICE_ACCOUNT_JSON: pick('FCM_SERVICE_ACCOUNT_JSON') ?? '',
+      FCM_SERVICE_ACCOUNT_JSON_B64: pick('FCM_SERVICE_ACCOUNT_JSON_B64') ?? '',
+      FCM_ANDROID_CHANNEL_ID: pick('FCM_ANDROID_CHANNEL_ID') ?? '',
     };
   }
 }
