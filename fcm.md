@@ -208,6 +208,118 @@ Recommended `data` payload keys:
 
 ---
 
+## 6) Current Flutter FCM implementation (what’s in the app now)
+
+This section documents the current delivery partner Flutter app behavior so backend changes can be validated against real client expectations.
+
+### 6.1 Initialization + background handler
+
+- **Firebase init (Android/iOS only)**: `lib/main.dart`
+  - `Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform)`
+- **Background/killed handler**: `lib/main.dart`
+  - `FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler)`
+  - Handler logs: `type`, `orderId`, `title`, `body`, and raw `data`
+
+### 6.2 Permission + token register/unregister (partner JWT)
+
+- **Permission + token flow**: `lib/src/features/push/push_token_manager.dart`
+  - `FirebaseMessaging.instance.requestPermission()`
+  - `FirebaseMessaging.instance.getToken()` → backend `POST /push/register`
+  - `FirebaseMessaging.instance.onTokenRefresh` → re-register token
+  - On logout: gets token again → backend `POST /push/unregister`
+- **Backend API calls**: `lib/src/features/push/data/push_repository.dart`
+  - `POST /push/register` body: `{ token, platform: "android"|"ios", deviceId? }`
+  - `POST /push/unregister` body: `{ token }`
+
+### 6.3 When registration happens
+
+- Wired into session lifecycle: `lib/src/app/app_session/app_session_bloc.dart`
+  - On boot with cached session → starts token manager (register)
+  - On login → starts token manager (register)
+  - On logout → unregister (while JWT still available) → `/auth/logout` → unauthenticated
+
+### 6.4 Message listeners + navigation
+
+- Listeners: `lib/src/app/app.dart`
+  - Foreground: `FirebaseMessaging.onMessage`
+  - Opened from background: `FirebaseMessaging.onMessageOpenedApp`
+  - Launched from killed: `FirebaseMessaging.instance.getInitialMessage()`
+- Handled event types:
+  - `order.updated`
+  - `order.assigned`
+  - With `audience == deliveryPartner` (also accepts missing `audience`)
+- Navigation:
+  - Routes to `/partner?tab=orders&orderId=<uuid>`
+  - Orders tab auto-opens the order details sheet if that `orderId` exists in the fetched assigned-orders list.
+
+### 6.5 Android permissions
+
+`android/app/src/main/AndroidManifest.xml`:
+
+- `INTERNET`
+- `POST_NOTIFICATIONS` (Android 13+)
+
+---
+
+## 7) Backend checklist to verify FCM is configured correctly
+
+### 7.1 Token registration path works end-to-end
+
+- Call `POST /api/push/register` with a real **partner JWT** + real FCM token.
+- Verify DB: token row is saved and linked to the correct **userId** (partner user id), not `deliveryPartnerId` (DeliveryPartner row id).
+- Return code: should be 200/201 (anything else should be logged + surfaced).
+
+### 7.2 Send a test push using a stored token (no app logic)
+
+- Pick one token from DB and send a direct test.
+- Confirm device receives it when:
+  - App foreground (should hit `onMessage` in logs; OS may not show banner)
+  - App background/killed (OS should show notification UI if `notification` payload present)
+
+### 7.3 Payload must include both `notification` and `data`
+
+For the current approach (OS shows banner automatically in background), backend must send:
+
+- `notification: { title, body }`
+- `data`: **string map** with keys:
+  - `type` (`order.assigned` or `order.updated`)
+  - `audience` (`deliveryPartner`)
+  - `orderId`
+  - `status`
+  - `deliveryStatus`
+
+Important: in FCM, **data values should be strings**. If the backend sends numbers/objects, some SDKs behave inconsistently.
+
+### 7.4 Correct `type` rules
+
+Partner receives:
+
+- `type=order.assigned` only when `deliveryStatus == ASSIGNED`
+- otherwise `type=order.updated`
+
+### 7.5 Token cleanup logic
+
+If FCM send returns `NotRegistered` / `InvalidRegistration`, backend should delete that token.
+
+### 7.6 Android vs iOS configuration
+
+- **Android**: sending via FCM should work once tokens are registered.
+- **iOS** requires extra readiness:
+  - APNs key/cert uploaded to Firebase
+  - correct iOS bundle id matches Firebase app
+  - if missing, iOS tokens may exist but delivery fails
+
+---
+
+## 8) Potential backend flaws to double-check (high probability)
+
+- **Saving token against wrong id**: using `deliveryPartnerId` (DeliveryPartner row) instead of partner `userId` (JWT `sub`).
+- **Missing `notification` block**: background/killed won’t show UI; you’d only see data handling if you implement local notifications.
+- **Wrong key names**: Flutter expects `type`, `audience`, `orderId`.
+- **Non-string `data` values**: some platforms drop/alter non-string values.
+- **Wrong Firebase project**: tokens from Project A won’t receive messages sent from Project B.
+- **Not actually sending to device tokens**: FCM requires actual tokens (or properly managed topics).
+
 ## 4) Deployment configuration (secrets)
 
 ### 4.1 Local development

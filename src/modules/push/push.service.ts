@@ -38,18 +38,57 @@ export class PushService {
   }
 
   private async sendToUser(userId: string, msg: { title: string; body: string; data: Record<string, string> }) {
+    // FCM `data` values must be strings.
+    const data: Record<string, string> = Object.fromEntries(
+      Object.entries(msg.data).map(([k, v]) => [k, String(v)]),
+    );
+
     const tokens = await this.prisma.pushToken.findMany({
       where: { userId },
-      select: { token: true },
+      select: { token: true, platform: true },
     });
-    const tokenStrings = tokens.map((t) => t.token);
 
-    const res = await this.fcm.sendToTokens({
-      tokens: tokenStrings,
-      title: msg.title,
-      body: msg.body,
-      data: msg.data,
-    });
+    const byPlatform = tokens.reduce(
+      (acc, t) => {
+        const platform =
+          t.platform === 'android' || t.platform === 'ios' || t.platform === 'web'
+            ? (t.platform as 'android' | 'ios' | 'web')
+            : 'web';
+        (acc[platform] ??= []).push(t.token);
+        return acc;
+      },
+      {} as Record<'android' | 'ios' | 'web', string[]>,
+    );
+
+    const results = await Promise.all([
+      this.fcm.sendToTokens({
+        tokens: byPlatform.android ?? [],
+        title: msg.title,
+        body: msg.body,
+        data,
+        platform: 'android',
+      }),
+      this.fcm.sendToTokens({
+        tokens: byPlatform.ios ?? [],
+        title: msg.title,
+        body: msg.body,
+        data,
+        platform: 'ios',
+      }),
+      this.fcm.sendToTokens({
+        tokens: byPlatform.web ?? [],
+        title: msg.title,
+        body: msg.body,
+        data,
+        platform: 'web',
+      }),
+    ]);
+
+    const res = {
+      successCount: results.reduce((n, r) => n + r.successCount, 0),
+      failureCount: results.reduce((n, r) => n + r.failureCount, 0),
+      invalidTokens: results.flatMap((r) => r.invalidTokens),
+    };
 
     if (res.invalidTokens.length > 0) {
       await this.prisma.pushToken.deleteMany({
