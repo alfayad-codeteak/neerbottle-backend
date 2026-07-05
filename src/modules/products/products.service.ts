@@ -21,15 +21,16 @@ export class ProductsService {
       where: { isActive: true, stock: { gt: 0 } },
       orderBy: { name: 'asc' },
     });
-    return list.map((p) => this.toResponse(p, depositPerCan));
+    return list.map((p) => this.toResponse(p, depositPerCan, depositConfig.enabled));
   }
 
   /** Admin: list all products including inactive and zero-stock (full status). */
   async findAllAdmin() {
+    const { depositPerCan, depositsGloballyEnabled } = await this.depositContext();
     const list = await this.prisma.product.findMany({
       orderBy: { name: 'asc' },
     });
-    return list.map((p) => this.toResponse(p));
+    return list.map((p) => this.toResponse(p, depositPerCan, depositsGloballyEnabled));
   }
 
   /** Get one product by id. Returns 404 if not found or not available (inactive/zero stock). */
@@ -42,22 +43,24 @@ export class ProductsService {
     if (!product || !product.isActive) {
       throw new NotFoundException('Product not found');
     }
-    return this.toResponse(product, depositPerCan);
+    return this.toResponse(product, depositPerCan, depositConfig.enabled);
   }
 
   /** Admin: get one product by id (includes inactive). */
   async findOneAdmin(id: string) {
+    const { depositPerCan, depositsGloballyEnabled } = await this.depositContext();
     const product = await this.prisma.product.findUnique({
       where: { id },
     });
     if (!product) {
       throw new NotFoundException('Product not found');
     }
-    return this.toResponse(product);
+    return this.toResponse(product, depositPerCan, depositsGloballyEnabled);
   }
 
   /** Admin: create product */
   async create(dto: CreateProductDto) {
+    const { depositPerCan, depositsGloballyEnabled } = await this.depositContext();
     const product = await this.prisma.product.create({
       data: {
         name: dto.name,
@@ -66,13 +69,15 @@ export class ProductsService {
         photoUrls: dto.photoUrls ?? (dto.photoUrl ? [dto.photoUrl] : []),
         stock: dto.stock,
         category: dto.category ?? null,
+        hasDeposit: dto.hasDeposit ?? true,
       },
     });
-    return this.toResponse(product);
+    return this.toResponse(product, depositPerCan, depositsGloballyEnabled);
   }
 
   /** Admin: update product */
   async update(id: string, dto: UpdateProductDto) {
+    const { depositPerCan, depositsGloballyEnabled } = await this.depositContext();
     const existing = await this.prisma.product.findUnique({ where: { id } });
     if (!existing) {
       throw new NotFoundException('Product not found');
@@ -88,13 +93,15 @@ export class ProductsService {
         ...(dto.stock != null && { stock: dto.stock }),
         ...(dto.category !== undefined && { category: dto.category || null }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+        ...(dto.hasDeposit !== undefined && { hasDeposit: dto.hasDeposit }),
       },
     });
-    return this.toResponse(product);
+    return this.toResponse(product, depositPerCan, depositsGloballyEnabled);
   }
 
   /** Admin: bulk update product price and stock */
   async bulkUpdatePriceAndStock(dto: BulkUpdateProductsDto) {
+    const { depositPerCan, depositsGloballyEnabled } = await this.depositContext();
     const ids = dto.items.map((i) => i.id);
     const uniqueIds = Array.from(new Set(ids));
 
@@ -122,7 +129,9 @@ export class ProductsService {
 
     return {
       count: updated.length,
-      products: updated.map((p) => this.toResponse(p)),
+      products: updated.map((p) =>
+        this.toResponse(p, depositPerCan, depositsGloballyEnabled),
+      ),
     };
   }
 
@@ -144,25 +153,41 @@ export class ProductsService {
     return { success: true, id };
   }
 
-  private toResponse(p: {
-    id: string;
-    name: string;
-    price: Decimal;
-    photoUrl: string | null;
-    photoUrls: string[];
-    stock: number;
-    category: string | null;
-    isActive: boolean;
-    createdAt: Date;
-    updatedAt: Date;
-  }, depositPerCan = 0) {
+  private async depositContext() {
+    const depositConfig = await this.depositsService.getRuntimeConfig();
+    return {
+      depositPerCan: depositConfig.enabled ? Number(depositConfig.perCanAmount) : 0,
+      depositsGloballyEnabled: depositConfig.enabled,
+    };
+  }
+
+  private toResponse(
+    p: {
+      id: string;
+      name: string;
+      price: Decimal;
+      photoUrl: string | null;
+      photoUrls: string[];
+      stock: number;
+      category: string | null;
+      isActive: boolean;
+      hasDeposit: boolean;
+      createdAt: Date;
+      updatedAt: Date;
+    },
+    depositPerCan = 0,
+    depositsGloballyEnabled = false,
+  ) {
     const price = Number(p.price);
+    const appliesDeposit = p.hasDeposit !== false && depositsGloballyEnabled;
+    const effectiveDepositPerCan = appliesDeposit ? depositPerCan : 0;
     return {
       id: p.id,
       name: p.name,
       price,
-      depositPerCan,
-      orderValuePerCan: price + depositPerCan,
+      hasDeposit: p.hasDeposit !== false,
+      depositPerCan: effectiveDepositPerCan,
+      orderValuePerCan: price + effectiveDepositPerCan,
       photoUrl: p.photoUrl,
       photoUrls: Array.isArray(p.photoUrls) ? p.photoUrls : [],
       stock: p.stock,

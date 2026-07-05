@@ -19,6 +19,7 @@ import {
   ApiQuery,
   ApiParam,
   ApiOkResponse,
+  ApiCreatedResponse,
 } from '@nestjs/swagger';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -26,8 +27,14 @@ import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { OrdersService } from './orders.service';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { AssignOrderDto } from './dto/assign-order.dto';
+import { AdminCreateOrderDto } from './dto/admin-create-order.dto';
 import { DepositsService } from '../deposits/deposits.service';
-import { ApiErrorResponseDto, OrderResponseDto, DepositRefundResponseDto } from '../../common/swagger/swagger-response.dto';
+import {
+  ApiErrorResponseDto,
+  OrderResponseDto,
+  OrderQuoteResponseDto,
+  DepositRefundResponseDto,
+} from '../../common/swagger/swagger-response.dto';
 
 interface RequestWithUser extends Request {
   user: { id: string };
@@ -98,6 +105,42 @@ export class AdminOrdersController {
       phone,
       timeSlot,
     });
+  }
+
+  @Post('quote')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Price quote for a customer (no persistence)',
+    description:
+      'Same rules as customer checkout. Body includes `userId` (customer) plus cart fields. Use before placing an order on behalf of a customer.',
+  })
+  @ApiOkResponse({ description: 'Computed totals only.', type: OrderQuoteResponseDto })
+  @ApiResponse({ status: 400, description: 'Invalid customer, address, products, or quantities.', type: ApiErrorResponseDto })
+  @ApiResponse({ status: 404, description: 'Customer not found.', type: ApiErrorResponseDto })
+  quote(@Body() dto: AdminCreateOrderDto) {
+    return this.ordersService.quoteForCustomer(dto);
+  }
+
+  @Post()
+  @ApiOperation({
+    summary: 'Create order on behalf of a customer',
+    description: [
+      'Places an order for the given `userId`. `addressId` must belong to that customer.',
+      'Decrements stock, applies deposit rules, and notifies customer (Socket.IO + FCM).',
+    ].join('\n'),
+  })
+  @ApiCreatedResponse({
+    description: 'Persisted order with nested `user` (customer).',
+    type: OrderResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid address, stock, items, or business rule violation.',
+    type: ApiErrorResponseDto,
+  })
+  @ApiResponse({ status: 404, description: 'Customer not found.', type: ApiErrorResponseDto })
+  create(@Body() dto: AdminCreateOrderDto) {
+    return this.ordersService.createForCustomer(dto);
   }
 
   @Post(':id/assign')

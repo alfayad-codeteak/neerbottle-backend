@@ -76,6 +76,7 @@ async function bootstrap() {
     .addTag('Admin – Orders', 'Operations desk: list/filter orders, status, assign partners, cancel, deposit refund.')
     .addTag('Admin – Customers', 'Customer directory and detail for support.')
     .addTag('Admin – Delivery partners', 'Create and manage delivery partner accounts linked to login users.')
+    .addTag('Admin – Purchase entries', 'Record supplier purchases and add inventory stock.')
     .addTag('Delivery partners', 'Self-service API for users with role `deliveryPartner`.')
     .build();
   const document = SwaggerModule.createDocument(app, config, {

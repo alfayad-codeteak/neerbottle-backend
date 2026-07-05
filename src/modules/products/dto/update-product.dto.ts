@@ -46,4 +46,12 @@ export class UpdateProductDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiPropertyOptional({
+    example: true,
+    description: 'When false, this product does not add per-can deposit on orders',
+  })
+  @IsOptional()
+  @IsBoolean()
+  hasDeposit?: boolean;
 }

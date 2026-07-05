@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsNumber, IsOptional, IsUrl, Min, MinLength, IsArray } from 'class-validator';
+import { IsString, IsNumber, IsOptional, IsUrl, Min, MinLength, IsArray, IsBoolean } from 'class-validator';
 
 export class CreateProductDto {
   @ApiProperty({ example: '20L Water Can' })
@@ -38,4 +38,12 @@ export class CreateProductDto {
   @IsOptional()
   @IsString()
   category?: string;
+
+  @ApiPropertyOptional({
+    example: true,
+    description: 'When false, this product does not add per-can deposit on orders',
+  })
+  @IsOptional()
+  @IsBoolean()
+  hasDeposit?: boolean;
 }

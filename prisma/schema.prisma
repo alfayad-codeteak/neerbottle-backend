@@ -28,6 +28,7 @@ model User {
   depositTransactions DepositTransaction[]
   deliveryPartner DeliveryPartner?
   pushTokens   PushToken[]
+  purchaseEntriesCreated PurchaseEntry[] @relation("PurchaseEntryCreatedBy")
 }
 
 model PushToken {
@@ -88,9 +89,43 @@ model Product {
   stock       Int         @default(0)
   category    String?
   isActive    Boolean     @default(true)
+  hasDeposit  Boolean     @default(true)
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
   orderItems  OrderItem[]
+  purchaseEntryItems PurchaseEntryItem[]
+}
+
+// ---- Purchase entries (inventory in) ----
+model PurchaseEntry {
+  id           String   @id @default(cuid())
+  supplierName String?
+  referenceNo  String?
+  notes        String?
+  totalAmount  Decimal  @db.Decimal(12, 2)
+  purchasedAt  DateTime @default(now())
+  createdById  String?
+  createdBy    User?    @relation("PurchaseEntryCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  items        PurchaseEntryItem[]
+
+  @@index([purchasedAt])
+  @@index([createdAt])
+}
+
+model PurchaseEntryItem {
+  id              String        @id @default(cuid())
+  purchaseEntryId String
+  purchaseEntry   PurchaseEntry @relation(fields: [purchaseEntryId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product       @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity        Int
+  unitCost        Decimal       @db.Decimal(10, 2)
+  createdAt       DateTime      @default(now())
+
+  @@index([purchaseEntryId])
+  @@index([productId])
 }
 
 // ---- Orders ----

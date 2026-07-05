@@ -13,6 +13,7 @@ import { DepositsModule } from './modules/deposits/deposits.module';
 import { DeliveryPartnersModule } from './modules/delivery-partners/delivery-partners.module';
 import { PushModule } from './modules/push/push.module';
 import { DeliveryZonesModule } from './modules/delivery-zones/delivery-zones.module';
+import { PurchasesModule } from './modules/purchases/purchases.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { DeliveryZonesModule } from './modules/delivery-zones/delivery-zones.mod
     DeliveryPartnersModule,
     PushModule,
     DeliveryZonesModule,
+    PurchasesModule,
   ],
 })
 export class AppModule {}

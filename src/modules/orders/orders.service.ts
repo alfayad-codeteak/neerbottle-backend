@@ -7,6 +7,7 @@ import {
 import { Decimal } from '@prisma/client/runtime/library';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { AdminCreateOrderDto } from './dto/admin-create-order.dto';
 import { STATUS_FLOW, OrderStatus } from './orders.constants';
 import { nextDeliveryStatus } from './delivery.constants';
 import { DepositsService } from '../deposits/deposits.service';
@@ -92,6 +93,32 @@ export class OrdersService {
     return this.toOrderResponse(full!);
   }
 
+  async createForCustomer(dto: AdminCreateOrderDto) {
+    await this.assertCustomerExists(dto.userId);
+    const { userId, ...orderDto } = dto;
+    const created = await this.create(userId, orderDto);
+    const full = await this.prisma.order.findUnique({
+      where: { id: created.id },
+      include: orderFullInclude,
+    });
+    return this.toOrderResponse(full!, true);
+  }
+
+  async quoteForCustomer(dto: AdminCreateOrderDto) {
+    await this.assertCustomerExists(dto.userId);
+    const { userId, ...orderDto } = dto;
+    return this.quote(userId, orderDto);
+  }
+
+  private async assertCustomerExists(userId: string) {
+    const customer = await this.prisma.user.findFirst({
+      where: { id: userId, role: 'customer' },
+    });
+    if (!customer) {
+      throw new NotFoundException('Customer not found');
+    }
+  }
+
   async quote(userId: string, dto: CreateOrderDto) {
     const quote = await this.buildQuote(userId, dto);
     return {
@@ -126,6 +153,7 @@ export class OrdersService {
     const orderItems: { productId: string; quantity: number; unitPrice: Decimal }[] = [];
     let itemsSubtotal = new Decimal(0);
     let totalQty = 0;
+    let depositEligibleQty = 0;
 
     for (const item of dto.items) {
       const product = productMap.get(item.productId);
@@ -140,12 +168,16 @@ export class OrdersService {
       orderItems.push({ productId: product.id, quantity: item.quantity, unitPrice: product.price });
       itemsSubtotal = itemsSubtotal.add(new Decimal(product.price).mul(item.quantity));
       totalQty += item.quantity;
+      if (product.hasDeposit !== false) {
+        depositEligibleQty += item.quantity;
+      }
     }
 
     const ifCanRefund = dto.ifCanRefund ?? false;
     const requestedReturned = ifCanRefund ? (dto.returnedCanCount ?? 0) : 0;
     const returnedCanCount = Math.max(0, Math.min(requestedReturned, totalQty));
-    const chargeableCanCount = Math.max(0, totalQty - returnedCanCount);
+    const returnedForDeposit = Math.max(0, Math.min(returnedCanCount, depositEligibleQty));
+    const chargeableCanCount = Math.max(0, depositEligibleQty - returnedForDeposit);
 
     const depositConfig = await this.depositsService.getRuntimeConfig();
     const depositEnabled = depositConfig.enabled;
