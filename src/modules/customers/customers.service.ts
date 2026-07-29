@@ -1,13 +1,29 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AddressesService } from '../addresses/addresses.service';
+import { CreateAddressDto } from '../addresses/dto/create-address.dto';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 
 const SALT_ROUNDS = 10;
 
 @Injectable()
 export class CustomersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly addressesService: AddressesService,
+  ) {}
+
+  private async ensureCustomer(id: string) {
+    const user = await this.prisma.user.findFirst({
+      where: { id, role: 'customer' },
+      select: { id: true },
+    });
+    if (!user) {
+      throw new NotFoundException('Customer not found');
+    }
+    return user;
+  }
 
   async createAdmin(dto: CreateCustomerDto) {
     const existing = await this.prisma.user.findUnique({ where: { phone: dto.phone } });
@@ -31,7 +47,8 @@ export class CustomersService {
         _count: { select: { orders: true, addresses: true } },
       },
     });
-    return {
+
+    const customer = {
       id: user.id,
       phone: user.phone,
       name: user.name,
@@ -40,6 +57,21 @@ export class CustomersService {
       orderCount: user._count.orders,
       addressCount: user._count.addresses,
     };
+
+    if (!dto.address) {
+      return customer;
+    }
+
+    const address = await this.addressesService.create(user.id, {
+      ...dto.address,
+      isDefault: dto.address.isDefault ?? true,
+    });
+    return { ...customer, addressCount: 1, addresses: [address] };
+  }
+
+  async createAddressAdmin(customerId: string, dto: CreateAddressDto) {
+    await this.ensureCustomer(customerId);
+    return this.addressesService.create(customerId, dto);
   }
 
   async findAllAdmin(filters: { phone?: string; name?: string; page?: number; limit?: number }) {

@@ -1,5 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, Matches, MinLength, MaxLength, IsOptional } from 'class-validator';
+import { IsString, Matches, MinLength, MaxLength, IsOptional, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
+import { CreateAddressDto } from '../../addresses/dto/create-address.dto';
 
 const PHONE_REGEX = /^[0-9]{10}$/;
 
@@ -21,4 +23,13 @@ export class CreateCustomerDto {
   @IsString()
   @MinLength(6, { message: 'Password must be at least 6 characters' })
   password?: string;
+
+  @ApiPropertyOptional({
+    type: CreateAddressDto,
+    description: 'Optional delivery address to create with the customer (first address defaults to isDefault if omitted).',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CreateAddressDto)
+  address?: CreateAddressDto;
 }

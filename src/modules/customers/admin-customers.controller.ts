@@ -13,11 +13,13 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { CustomersService } from './customers.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
+import { CreateAddressDto } from '../addresses/dto/create-address.dto';
 import {
   ApiErrorResponseDto,
   PaginatedCustomersResponseDto,
   CustomerDetailResponseDto,
   CustomerListRowDto,
+  MyAddressResponseDto,
 } from '../../common/swagger/swagger-response.dto';
 
 @ApiTags('Admin – Customers')
@@ -31,12 +33,25 @@ export class AdminCustomersController {
   @ApiOperation({
     summary: 'Create customer',
     description:
-      'Creates a **User** with `role: customer`. Phone must be unique system-wide. Password is optional (OTP login still works without one).',
+      'Creates a **User** with `role: customer`. Phone must be unique system-wide. Password is optional (OTP login still works without one). Optionally include an `address` object to save a delivery address in the same request.',
   })
-  @ApiCreatedResponse({ description: 'New customer row.', type: CustomerListRowDto })
+  @ApiCreatedResponse({ description: 'New customer row (includes `addresses` when address was sent).', type: CustomerListRowDto })
   @ApiResponse({ status: 409, description: 'Phone already registered.', type: ApiErrorResponseDto })
   create(@Body() dto: CreateCustomerDto) {
     return this.customersService.createAdmin(dto);
+  }
+
+  @Post(':id/addresses')
+  @ApiOperation({
+    summary: 'Add customer address',
+    description:
+      'Creates a delivery address for an existing customer. Optional `isDefault: true` clears default on their other addresses.',
+  })
+  @ApiParam({ name: 'id', description: 'Customer user UUID' })
+  @ApiCreatedResponse({ description: 'New address row.', type: MyAddressResponseDto })
+  @ApiResponse({ status: 404, description: 'Not a customer id.', type: ApiErrorResponseDto })
+  createAddress(@Param('id') id: string, @Body() dto: CreateAddressDto) {
+    return this.customersService.createAddressAdmin(id, dto);
   }
 
   @Get()
