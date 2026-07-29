@@ -1,9 +1,46 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CreateCustomerDto } from './dto/create-customer.dto';
+
+const SALT_ROUNDS = 10;
 
 @Injectable()
 export class CustomersService {
   constructor(private readonly prisma: PrismaService) {}
+
+  async createAdmin(dto: CreateCustomerDto) {
+    const existing = await this.prisma.user.findUnique({ where: { phone: dto.phone } });
+    if (existing) {
+      throw new ConflictException('Phone already registered');
+    }
+    const passwordHash = dto.password ? await bcrypt.hash(dto.password, SALT_ROUNDS) : null;
+    const user = await this.prisma.user.create({
+      data: {
+        phone: dto.phone,
+        name: dto.name ?? null,
+        passwordHash,
+        role: 'customer',
+      },
+      select: {
+        id: true,
+        phone: true,
+        name: true,
+        createdAt: true,
+        updatedAt: true,
+        _count: { select: { orders: true, addresses: true } },
+      },
+    });
+    return {
+      id: user.id,
+      phone: user.phone,
+      name: user.name,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+      orderCount: user._count.orders,
+      addressCount: user._count.addresses,
+    };
+  }
 
   async findAllAdmin(filters: { phone?: string; name?: string; page?: number; limit?: number }) {
     const where: Record<string, unknown> = { role: 'customer' };

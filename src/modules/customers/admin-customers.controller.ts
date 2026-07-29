@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, UseGuards } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -7,14 +7,17 @@ import {
   ApiQuery,
   ApiParam,
   ApiOkResponse,
+  ApiCreatedResponse,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { CustomersService } from './customers.service';
+import { CreateCustomerDto } from './dto/create-customer.dto';
 import {
   ApiErrorResponseDto,
   PaginatedCustomersResponseDto,
   CustomerDetailResponseDto,
+  CustomerListRowDto,
 } from '../../common/swagger/swagger-response.dto';
 
 @ApiTags('Admin – Customers')
@@ -23,6 +26,18 @@ import {
 @ApiBearerAuth()
 export class AdminCustomersController {
   constructor(private readonly customersService: CustomersService) {}
+
+  @Post()
+  @ApiOperation({
+    summary: 'Create customer',
+    description:
+      'Creates a **User** with `role: customer`. Phone must be unique system-wide. Password is optional (OTP login still works without one).',
+  })
+  @ApiCreatedResponse({ description: 'New customer row.', type: CustomerListRowDto })
+  @ApiResponse({ status: 409, description: 'Phone already registered.', type: ApiErrorResponseDto })
+  create(@Body() dto: CreateCustomerDto) {
+    return this.customersService.createAdmin(dto);
+  }
 
   @Get()
   @ApiOperation({
