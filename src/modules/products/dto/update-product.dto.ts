@@ -8,11 +8,35 @@ export class UpdateProductDto {
   @MinLength(1)
   name?: string;
 
-  @ApiPropertyOptional({ example: 100.5 })
+  @ApiPropertyOptional({
+    example: 100.5,
+    description: 'Sale price per unit (alias of salePrice)',
+  })
   @IsOptional()
   @IsNumber()
   @Min(0)
   price?: number;
+
+  @ApiPropertyOptional({
+    example: 100.5,
+    description: 'Sale price per unit (preferred over price when both are sent)',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  salePrice?: number;
+
+  @ApiPropertyOptional({ example: 120, description: 'Maximum retail price (display / compare)' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  mrp?: number;
+
+  @ApiPropertyOptional({ example: 5, description: 'Per-unit handling fee (catalog field)' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  handlingFee?: number;
 
   @ApiPropertyOptional({ example: 'https://example.com/photo.jpg' })
   @IsOptional()

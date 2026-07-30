@@ -161,8 +161,17 @@ export class ProductResponseDto {
   @ApiProperty()
   name: string;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Sale price per unit (compat alias of salePrice)' })
   price: number;
+
+  @ApiProperty({ description: 'Sale price per unit (same as price)' })
+  salePrice: number;
+
+  @ApiPropertyOptional({ nullable: true, description: 'Maximum retail price' })
+  mrp: number | null;
+
+  @ApiProperty({ description: 'Per-unit handling fee (catalog field; not added to order totals)' })
+  handlingFee: number;
 
   @ApiProperty({
     description: 'Per-can deposit when deposits are enabled; 0 when disabled',

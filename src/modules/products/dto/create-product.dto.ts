@@ -7,10 +7,35 @@ export class CreateProductDto {
   @MinLength(1)
   name: string;
 
-  @ApiProperty({ example: 100.5, description: 'Price per unit' })
+  @ApiPropertyOptional({
+    example: 100.5,
+    description: 'Sale price per unit (alias of salePrice; one of price or salePrice is required)',
+  })
+  @IsOptional()
   @IsNumber()
   @Min(0)
-  price: number;
+  price?: number;
+
+  @ApiPropertyOptional({
+    example: 100.5,
+    description: 'Sale price per unit (preferred over price when both are sent)',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  salePrice?: number;
+
+  @ApiPropertyOptional({ example: 120, description: 'Maximum retail price (display / compare)' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  mrp?: number;
+
+  @ApiPropertyOptional({ example: 5, description: 'Per-unit handling fee (catalog field; default 0)' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  handlingFee?: number;
 
   @ApiPropertyOptional({ example: 'https://example.com/photo.jpg' })
   @IsOptional()

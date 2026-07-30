@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -60,11 +60,17 @@ export class ProductsService {
 
   /** Admin: create product */
   async create(dto: CreateProductDto) {
+    const salePrice = dto.salePrice ?? dto.price;
+    if (salePrice == null) {
+      throw new BadRequestException('Either salePrice or price is required');
+    }
     const { depositPerCan, depositsGloballyEnabled } = await this.depositContext();
     const product = await this.prisma.product.create({
       data: {
         name: dto.name,
-        price: new Decimal(dto.price),
+        price: new Decimal(salePrice),
+        mrp: dto.mrp != null ? new Decimal(dto.mrp) : null,
+        handlingFee: new Decimal(dto.handlingFee ?? 0),
         photoUrl: dto.photoUrl ?? dto.photoUrls?.[0] ?? null,
         photoUrls: dto.photoUrls ?? (dto.photoUrl ? [dto.photoUrl] : []),
         stock: dto.stock,
@@ -82,11 +88,14 @@ export class ProductsService {
     if (!existing) {
       throw new NotFoundException('Product not found');
     }
+    const salePrice = dto.salePrice ?? dto.price;
     const product = await this.prisma.product.update({
       where: { id },
       data: {
         ...(dto.name != null && { name: dto.name }),
-        ...(dto.price != null && { price: new Decimal(dto.price) }),
+        ...(salePrice != null && { price: new Decimal(salePrice) }),
+        ...(dto.mrp !== undefined && { mrp: dto.mrp == null ? null : new Decimal(dto.mrp) }),
+        ...(dto.handlingFee != null && { handlingFee: new Decimal(dto.handlingFee) }),
         ...(dto.photoUrl !== undefined && { photoUrl: dto.photoUrl || null }),
         ...(dto.photoUrls !== undefined && { photoUrls: dto.photoUrls }),
         ...(dto.photoUrls !== undefined && dto.photoUrl === undefined && { photoUrl: dto.photoUrls[0] ?? null }),
@@ -122,6 +131,8 @@ export class ProductsService {
           data: {
             price: new Decimal(item.price),
             stock: item.stock,
+            ...(item.mrp !== undefined && { mrp: item.mrp == null ? null : new Decimal(item.mrp) }),
+            ...(item.handlingFee != null && { handlingFee: new Decimal(item.handlingFee) }),
           },
         }),
       ),
@@ -166,6 +177,8 @@ export class ProductsService {
       id: string;
       name: string;
       price: Decimal;
+      mrp: Decimal | null;
+      handlingFee: Decimal;
       photoUrl: string | null;
       photoUrls: string[];
       stock: number;
@@ -179,12 +192,17 @@ export class ProductsService {
     depositsGloballyEnabled = false,
   ) {
     const price = Number(p.price);
+    const mrp = p.mrp != null ? Number(p.mrp) : null;
+    const handlingFee = Number(p.handlingFee ?? 0);
     const appliesDeposit = p.hasDeposit !== false && depositsGloballyEnabled;
     const effectiveDepositPerCan = appliesDeposit ? depositPerCan : 0;
     return {
       id: p.id,
       name: p.name,
       price,
+      salePrice: price,
+      mrp,
+      handlingFee,
       hasDeposit: p.hasDeposit !== false,
       depositPerCan: effectiveDepositPerCan,
       orderValuePerCan: price + effectiveDepositPerCan,

@@ -81,18 +81,20 @@ model Address {
 
 // ---- Products ----
 model Product {
-  id          String      @id @default(cuid())
-  name        String
-  price       Decimal     @db.Decimal(10, 2)
-  photoUrl    String?
-  photoUrls   String[]    @default([])
-  stock       Int         @default(0)
-  category    String?
-  isActive    Boolean     @default(true)
-  hasDeposit  Boolean     @default(true)
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-  orderItems  OrderItem[]
+  id           String      @id @default(cuid())
+  name         String
+  price        Decimal     @db.Decimal(10, 2) // sale price
+  mrp          Decimal?    @db.Decimal(10, 2)
+  handlingFee  Decimal     @default(0) @db.Decimal(10, 2)
+  photoUrl     String?
+  photoUrls    String[]    @default([])
+  stock        Int         @default(0)
+  category     String?
+  isActive     Boolean     @default(true)
+  hasDeposit   Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  orderItems   OrderItem[]
   purchaseEntryItems PurchaseEntryItem[]
 }
 

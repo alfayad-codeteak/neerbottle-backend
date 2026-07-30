@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Product" ADD COLUMN "mrp" DECIMAL(10,2),
+ADD COLUMN "handlingFee" DECIMAL(10,2) NOT NULL DEFAULT 0;
