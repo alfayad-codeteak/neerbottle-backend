@@ -7,8 +7,21 @@ import { secretFromConfig } from '../../../config/secret-from-env';
 
 export type JwtPayload = { sub: string; phone: string; customerOtpSession?: boolean };
 
+type CachedAuthUser = {
+  id: string;
+  phone: string;
+  role: string;
+  permissions: unknown;
+  expiresAt: number;
+};
+
+const AUTH_CACHE_TTL_MS = 60_000;
+const AUTH_CACHE_MAX = 500;
+
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
+  private readonly authCache = new Map<string, CachedAuthUser>();
+
   constructor(
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
@@ -21,9 +34,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   }
 
   async validate(payload: JwtPayload) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: payload.sub },
-    });
+    const user = await this.getAuthUser(payload.sub);
     if (!user) {
       throw new UnauthorizedException();
     }
@@ -35,5 +46,34 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
         : [];
     const role = customerOtpSession ? 'customer' : user.role;
     return { id: user.id, phone: user.phone, role, permissions };
+  }
+
+  private async getAuthUser(userId: string) {
+    const now = Date.now();
+    const cached = this.authCache.get(userId);
+    if (cached && cached.expiresAt > now) {
+      return cached;
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, phone: true, role: true, permissions: true },
+    });
+    if (!user) {
+      this.authCache.delete(userId);
+      return null;
+    }
+
+    if (this.authCache.size >= AUTH_CACHE_MAX) {
+      const oldest = this.authCache.keys().next().value;
+      if (oldest) this.authCache.delete(oldest);
+    }
+
+    const entry: CachedAuthUser = {
+      ...user,
+      expiresAt: now + AUTH_CACHE_TTL_MS,
+    };
+    this.authCache.set(userId, entry);
+    return entry;
   }
 }

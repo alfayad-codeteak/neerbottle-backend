@@ -5,7 +5,7 @@ import { AddressesService } from '../addresses/addresses.service';
 import { CreateAddressDto } from '../addresses/dto/create-address.dto';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 
-const SALT_ROUNDS = 10;
+const SALT_ROUNDS = 8;
 
 @Injectable()
 export class CustomersService {

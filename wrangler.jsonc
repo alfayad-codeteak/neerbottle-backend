@@ -20,7 +20,9 @@
       "name": "fliq-water-backend-apicontainer",
       "class_name": "ApiContainer",
       "image": "./Dockerfile",
-      "max_instances": 3
+      "max_instances": 3,
+      // lite (1/16 vCPU, 256MB) makes Nest+Prisma create/update feel multi-second laggy.
+      "instance_type": "basic"
     }
   ],
 
@@ -32,5 +34,10 @@
 
   "vars": {
     "NODE_ENV": "production"
+  },
+
+  // Keep the Nest container warm so first admin/API hits after idle stay fast.
+  "triggers": {
+    "crons": ["*/4 * * * *"]
   }
 }

@@ -21,6 +21,21 @@ function withCors(response: Response, origin: string | null, allowedOrigins: str
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
+function corsPreflightResponse(origin: string, request: Request): Response {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      'Access-Control-Allow-Origin': origin,
+      'Access-Control-Allow-Credentials': 'true',
+      'Access-Control-Allow-Methods': 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+      'Access-Control-Allow-Headers':
+        request.headers.get('Access-Control-Request-Headers') ?? 'Content-Type,Authorization,Accept,X-Owner-Secret',
+      'Access-Control-Max-Age': '86400',
+      Vary: 'Origin',
+    },
+  });
+}
+
 function isRetryableContainerError(message: string): boolean {
   return (
     message.includes('not running') ||
@@ -49,8 +64,18 @@ type ContainerStub = {
 async function fetchFromContainer(request: Request, env: unknown): Promise<Response | null> {
   const container = getContainer((env as { API_CONTAINER: unknown }).API_CONTAINER, 'api') as ContainerStub;
 
-  // Extra backoff after deploys: DO “code was updated” / “network connection lost” often recover quickly.
-  const retryDelaysMs = [500, 1200, 2500, 4000];
+  // Fast path: warm container — skip startAndWaitForPorts (saves latency on create/update).
+  try {
+    return await container.fetch(request);
+  } catch (error) {
+    const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+    if (!isRetryableContainerError(message)) {
+      throw error;
+    }
+  }
+
+  // Cold path: start ports, then retry with short backoff.
+  const retryDelaysMs = [200, 600, 1500, 3000];
   for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
     try {
       if (container.startAndWaitForPorts) {
@@ -72,7 +97,8 @@ async function fetchFromContainer(request: Request, env: unknown): Promise<Respo
 
 export class ApiContainer extends Container {
   defaultPort = 3000;
-  sleepAfter = '5m';
+  // Keep the Nest container warm longer so admin/API requests avoid multi-second cold starts.
+  sleepAfter = '1h';
   enableInternet = true;
 
   constructor(ctx: unknown, env: unknown) {
@@ -106,29 +132,20 @@ export class ApiContainer extends Container {
   }
 }
 
+async function keepWarm(env: unknown): Promise<void> {
+  // Lightweight ping so the container stays up between admin sessions.
+  await fetchFromContainer(new Request('http://container/api/health/ping', { method: 'GET' }), env);
+}
+
 export default {
   async fetch(request: Request, env: unknown) {
     const origin = request.headers.get('Origin');
     const allowedOrigins = getAllowedOrigins(env);
 
-    // Let Nest answer preflight using the same `CORS_ORIGINS` as the API (container env).
-    // The old Worker-only allowlist defaulted to localhost and blocked production sites like https://www.neerbottle.in.
+    // Answer CORS preflight at the Worker (no Nest round-trip) — browsers do OPTIONS before every create/update.
     if (request.method === 'OPTIONS') {
-      const fromNest = await fetchFromContainer(request, env);
-      if (fromNest) return fromNest;
       if (origin && allowedOrigins.includes(origin)) {
-        return new Response(null, {
-          status: 204,
-          headers: {
-            'Access-Control-Allow-Origin': origin,
-            'Access-Control-Allow-Credentials': 'true',
-            'Access-Control-Allow-Methods': 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-            'Access-Control-Allow-Headers':
-              request.headers.get('Access-Control-Request-Headers') ?? 'Content-Type,Authorization,Accept,X-Owner-Secret',
-            'Access-Control-Max-Age': '86400',
-            Vary: 'Origin',
-          },
-        });
+        return corsPreflightResponse(origin, request);
       }
       return new Response(null, { status: 204 });
     }
@@ -145,5 +162,9 @@ export default {
     }
 
     return withCors(response, origin, allowedOrigins);
+  },
+
+  async scheduled(_controller: unknown, env: unknown, ctx: { waitUntil: (p: Promise<unknown>) => void }) {
+    ctx.waitUntil(keepWarm(env));
   },
 };

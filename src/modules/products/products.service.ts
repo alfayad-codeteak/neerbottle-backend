@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Prisma } from '../../generated/prisma';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -15,47 +16,49 @@ export class ProductsService {
 
   /** List all available products (stock > 0, isActive). Zero-stock hidden per business rules. */
   async findAll() {
-    const depositConfig = await this.depositsService.getRuntimeConfig();
+    const [depositConfig, list] = await Promise.all([
+      this.depositsService.getRuntimeConfig(),
+      this.prisma.product.findMany({
+        where: { isActive: true, stock: { gt: 0 } },
+        orderBy: { name: 'asc' },
+      }),
+    ]);
     const depositPerCan = depositConfig.enabled ? depositConfig.perCanAmount : 0;
-    const list = await this.prisma.product.findMany({
-      where: { isActive: true, stock: { gt: 0 } },
-      orderBy: { name: 'asc' },
-    });
     return list.map((p) => this.toResponse(p, depositPerCan, depositConfig.enabled));
   }
 
   /** Admin: list all products including inactive and zero-stock (full status). */
   async findAllAdmin() {
-    const { depositPerCan, depositsGloballyEnabled } = await this.depositContext();
-    const list = await this.prisma.product.findMany({
-      orderBy: { name: 'asc' },
-    });
-    return list.map((p) => this.toResponse(p, depositPerCan, depositsGloballyEnabled));
+    const [ctx, list] = await Promise.all([
+      this.depositContext(),
+      this.prisma.product.findMany({ orderBy: { name: 'asc' } }),
+    ]);
+    return list.map((p) => this.toResponse(p, ctx.depositPerCan, ctx.depositsGloballyEnabled));
   }
 
   /** Get one product by id. Returns 404 if not found or not available (inactive/zero stock). */
   async findOne(id: string) {
-    const depositConfig = await this.depositsService.getRuntimeConfig();
-    const depositPerCan = depositConfig.enabled ? depositConfig.perCanAmount : 0;
-    const product = await this.prisma.product.findUnique({
-      where: { id },
-    });
+    const [depositConfig, product] = await Promise.all([
+      this.depositsService.getRuntimeConfig(),
+      this.prisma.product.findUnique({ where: { id } }),
+    ]);
     if (!product || !product.isActive) {
       throw new NotFoundException('Product not found');
     }
+    const depositPerCan = depositConfig.enabled ? depositConfig.perCanAmount : 0;
     return this.toResponse(product, depositPerCan, depositConfig.enabled);
   }
 
   /** Admin: get one product by id (includes inactive). */
   async findOneAdmin(id: string) {
-    const { depositPerCan, depositsGloballyEnabled } = await this.depositContext();
-    const product = await this.prisma.product.findUnique({
-      where: { id },
-    });
+    const [ctx, product] = await Promise.all([
+      this.depositContext(),
+      this.prisma.product.findUnique({ where: { id } }),
+    ]);
     if (!product) {
       throw new NotFoundException('Product not found');
     }
-    return this.toResponse(product, depositPerCan, depositsGloballyEnabled);
+    return this.toResponse(product, ctx.depositPerCan, ctx.depositsGloballyEnabled);
   }
 
   /** Admin: create product */
@@ -64,60 +67,70 @@ export class ProductsService {
     if (salePrice == null) {
       throw new BadRequestException('Either salePrice or price is required');
     }
-    const { depositPerCan, depositsGloballyEnabled } = await this.depositContext();
-    const product = await this.prisma.product.create({
-      data: {
-        name: dto.name,
-        price: new Decimal(salePrice),
-        mrp: dto.mrp != null ? new Decimal(dto.mrp) : null,
-        handlingFee: new Decimal(dto.handlingFee ?? 0),
-        photoUrl: dto.photoUrl ?? dto.photoUrls?.[0] ?? null,
-        photoUrls: dto.photoUrls ?? (dto.photoUrl ? [dto.photoUrl] : []),
-        stock: dto.stock,
-        category: dto.category ?? null,
-        hasDeposit: dto.hasDeposit ?? true,
-      },
-    });
-    return this.toResponse(product, depositPerCan, depositsGloballyEnabled);
+    // Run deposit config + insert in parallel (deposit only needed for response shaping).
+    const [ctx, product] = await Promise.all([
+      this.depositContext(),
+      this.prisma.product.create({
+        data: {
+          name: dto.name,
+          price: new Decimal(salePrice),
+          mrp: dto.mrp != null ? new Decimal(dto.mrp) : null,
+          handlingFee: new Decimal(dto.handlingFee ?? 0),
+          photoUrl: dto.photoUrl ?? dto.photoUrls?.[0] ?? null,
+          photoUrls: dto.photoUrls ?? (dto.photoUrl ? [dto.photoUrl] : []),
+          stock: dto.stock,
+          category: dto.category ?? null,
+          hasDeposit: dto.hasDeposit ?? true,
+        },
+      }),
+    ]);
+    return this.toResponse(product, ctx.depositPerCan, ctx.depositsGloballyEnabled);
   }
 
   /** Admin: update product */
   async update(id: string, dto: UpdateProductDto) {
-    const { depositPerCan, depositsGloballyEnabled } = await this.depositContext();
-    const existing = await this.prisma.product.findUnique({ where: { id } });
-    if (!existing) {
-      throw new NotFoundException('Product not found');
-    }
     const salePrice = dto.salePrice ?? dto.price;
-    const product = await this.prisma.product.update({
-      where: { id },
-      data: {
-        ...(dto.name != null && { name: dto.name }),
-        ...(salePrice != null && { price: new Decimal(salePrice) }),
-        ...(dto.mrp !== undefined && { mrp: dto.mrp == null ? null : new Decimal(dto.mrp) }),
-        ...(dto.handlingFee != null && { handlingFee: new Decimal(dto.handlingFee) }),
-        ...(dto.photoUrl !== undefined && { photoUrl: dto.photoUrl || null }),
-        ...(dto.photoUrls !== undefined && { photoUrls: dto.photoUrls }),
-        ...(dto.photoUrls !== undefined && dto.photoUrl === undefined && { photoUrl: dto.photoUrls[0] ?? null }),
-        ...(dto.stock != null && { stock: dto.stock }),
-        ...(dto.category !== undefined && { category: dto.category || null }),
-        ...(dto.isActive !== undefined && { isActive: dto.isActive }),
-        ...(dto.hasDeposit !== undefined && { hasDeposit: dto.hasDeposit }),
-      },
-    });
-    return this.toResponse(product, depositPerCan, depositsGloballyEnabled);
+    const data = {
+      ...(dto.name != null && { name: dto.name }),
+      ...(salePrice != null && { price: new Decimal(salePrice) }),
+      ...(dto.mrp !== undefined && { mrp: dto.mrp == null ? null : new Decimal(dto.mrp) }),
+      ...(dto.handlingFee != null && { handlingFee: new Decimal(dto.handlingFee) }),
+      ...(dto.photoUrl !== undefined && { photoUrl: dto.photoUrl || null }),
+      ...(dto.photoUrls !== undefined && { photoUrls: dto.photoUrls }),
+      ...(dto.photoUrls !== undefined && dto.photoUrl === undefined && { photoUrl: dto.photoUrls[0] ?? null }),
+      ...(dto.stock != null && { stock: dto.stock }),
+      ...(dto.category !== undefined && { category: dto.category || null }),
+      ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+      ...(dto.hasDeposit !== undefined && { hasDeposit: dto.hasDeposit }),
+    };
+
+    try {
+      // Skip extra findUnique — one write RTT instead of read+write.
+      const [ctx, product] = await Promise.all([
+        this.depositContext(),
+        this.prisma.product.update({ where: { id }, data }),
+      ]);
+      return this.toResponse(product, ctx.depositPerCan, ctx.depositsGloballyEnabled);
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
+        throw new NotFoundException('Product not found');
+      }
+      throw err;
+    }
   }
 
   /** Admin: bulk update product price and stock */
   async bulkUpdatePriceAndStock(dto: BulkUpdateProductsDto) {
-    const { depositPerCan, depositsGloballyEnabled } = await this.depositContext();
     const ids = dto.items.map((i) => i.id);
     const uniqueIds = Array.from(new Set(ids));
 
-    const existing = await this.prisma.product.findMany({
-      where: { id: { in: uniqueIds } },
-      select: { id: true },
-    });
+    const [ctx, existing] = await Promise.all([
+      this.depositContext(),
+      this.prisma.product.findMany({
+        where: { id: { in: uniqueIds } },
+        select: { id: true },
+      }),
+    ]);
     const existingIds = new Set(existing.map((p) => p.id));
     const missingIds = uniqueIds.filter((id) => !existingIds.has(id));
     if (missingIds.length > 0) {
@@ -141,7 +154,7 @@ export class ProductsService {
     return {
       count: updated.length,
       products: updated.map((p) =>
-        this.toResponse(p, depositPerCan, depositsGloballyEnabled),
+        this.toResponse(p, ctx.depositPerCan, ctx.depositsGloballyEnabled),
       ),
     };
   }

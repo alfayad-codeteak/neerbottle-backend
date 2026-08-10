@@ -9,6 +9,13 @@ import { TopUpDepositDto } from './dto/top-up-deposit.dto';
 export class DepositsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private runtimeConfigCache: {
+    value: Awaited<ReturnType<DepositsService['loadRuntimeConfig']>>;
+    expiresAt: number;
+  } | null = null;
+
+  private static readonly RUNTIME_CONFIG_TTL_MS = 30_000;
+
   async getConfig() {
     const config = await this.ensureConfig();
     return this.toConfigResponse(config);
@@ -40,6 +47,7 @@ export class DepositsService {
         tiers: (dto.tiers ?? (Array.isArray(existing.tiers) ? existing.tiers : [])) as Prisma.InputJsonValue,
       },
     });
+    this.runtimeConfigCache = null;
     return this.toConfigResponse(updated);
   }
 
@@ -93,6 +101,19 @@ export class DepositsService {
   }
 
   async getRuntimeConfig() {
+    const now = Date.now();
+    if (this.runtimeConfigCache && this.runtimeConfigCache.expiresAt > now) {
+      return this.runtimeConfigCache.value;
+    }
+    const value = await this.loadRuntimeConfig();
+    this.runtimeConfigCache = {
+      value,
+      expiresAt: now + DepositsService.RUNTIME_CONFIG_TTL_MS,
+    };
+    return value;
+  }
+
+  private async loadRuntimeConfig() {
     const config = await this.ensureConfig();
     const tiers = (Array.isArray(config.tiers) ? config.tiers : []) as Array<{ minQty?: number; discountPercent?: number }>;
     return {
