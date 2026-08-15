@@ -358,6 +358,26 @@ export class AuthService {
     }
   }
 
+  async updateProfile(userId: string, name: string): Promise<AuthResponseDto['user']> {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      throw new BadRequestException('Name is required');
+    }
+    try {
+      const user = await this.prisma.user.update({
+        where: { id: userId },
+        data: { name: trimmed },
+        select: { id: true, phone: true, name: true, role: true, permissions: true },
+      });
+      return this.toUserResponse(user);
+    } catch (err) {
+      if (this.isDbUnavailableError(err)) {
+        throw new ServiceUnavailableException(DB_UNAVAILABLE_MSG);
+      }
+      throw err;
+    }
+  }
+
   private toUserResponse(user: { id: string; phone: string; name: string | null; role: string; permissions: unknown }): AuthResponseDto['user'] {
     const permissions = Array.isArray(user.permissions) ? user.permissions : [];
     return {

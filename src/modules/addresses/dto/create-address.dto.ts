@@ -2,6 +2,12 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsString, IsOptional, IsBoolean, MinLength } from 'class-validator';
 
 export class CreateAddressDto {
+  @ApiPropertyOptional({ example: 'Rahul Sharma', description: 'Recipient / contact name' })
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  name?: string;
+
   @ApiPropertyOptional({ example: 'Home', description: 'e.g. Home, Office, Shop' })
   @IsOptional()
   @IsString()

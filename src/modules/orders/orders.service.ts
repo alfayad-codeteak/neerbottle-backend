@@ -31,11 +31,13 @@ export class OrdersService {
   ) {}
 
   async create(userId: string, dto: CreateOrderDto) {
+    const timeSlot = (dto.timeSlot ?? '').trim() || '07:00-09:00';
     const quote = await this.buildQuote(userId, dto);
     const orderItems = quote.orderItems;
     const depositBase = quote.depositBase;
     const depositDiscount = quote.depositDiscount;
     const depositCharge = quote.depositCharge;
+    const handlingTotal = quote.handlingTotal;
     const finalTotalAmount = quote.finalTotalAmount;
 
     const created = await this.prisma.$transaction(async (tx) => {
@@ -43,12 +45,13 @@ export class OrdersService {
         data: {
           userId,
           addressId: quote.address.id,
-          timeSlot: dto.timeSlot,
+          timeSlot,
           paymentMethod: dto.paymentMethod,
           status: 'RECEIVED',
           ifCanRefund: quote.ifCanRefund,
           returnedCanCount: quote.returnedCanCount,
           totalAmount: finalTotalAmount,
+          handlingTotal,
           depositBase,
           depositDiscount,
           depositCharge,
@@ -123,6 +126,7 @@ export class OrdersService {
     const quote = await this.buildQuote(userId, dto);
     return {
       itemsSubtotal: Number(quote.itemsSubtotal),
+      handlingTotal: Number(quote.handlingTotal),
       depositEnabled: quote.depositEnabled,
       ifCanRefund: quote.ifCanRefund,
       quantity: quote.totalQty,
@@ -152,6 +156,7 @@ export class OrdersService {
 
     const orderItems: { productId: string; quantity: number; unitPrice: Decimal }[] = [];
     let itemsSubtotal = new Decimal(0);
+    let handlingTotal = new Decimal(0);
     let totalQty = 0;
     let depositEligibleQty = 0;
 
@@ -167,6 +172,10 @@ export class OrdersService {
       }
       orderItems.push({ productId: product.id, quantity: item.quantity, unitPrice: product.price });
       itemsSubtotal = itemsSubtotal.add(new Decimal(product.price).mul(item.quantity));
+      const lineHandling = new Decimal(product.handlingFee ?? 0).mul(item.quantity);
+      if (lineHandling.gt(0)) {
+        handlingTotal = handlingTotal.add(lineHandling);
+      }
       totalQty += item.quantity;
       if (product.hasDeposit !== false) {
         depositEligibleQty += item.quantity;
@@ -193,11 +202,12 @@ export class OrdersService {
     const depositCharge = depositEnabled
       ? Decimal.max(new Decimal(0), depositBase.sub(depositDiscount))
       : new Decimal(0);
-    const finalTotalAmount = itemsSubtotal.add(depositCharge);
+    const finalTotalAmount = itemsSubtotal.add(handlingTotal).add(depositCharge);
     return {
       address,
       orderItems,
       itemsSubtotal,
+      handlingTotal,
       depositEnabled,
       ifCanRefund,
       totalQty,
@@ -532,6 +542,7 @@ export class OrdersService {
       ifCanRefund: order.ifCanRefund ?? false,
       returnedCanCount: order.returnedCanCount ?? 0,
       totalAmount: Number(order.totalAmount),
+      handlingTotal: Number((order as { handlingTotal?: Decimal }).handlingTotal ?? 0),
       depositBase: Number((order as { depositBase?: Decimal }).depositBase ?? 0),
       depositDiscount: Number((order as { depositDiscount?: Decimal }).depositDiscount ?? 0),
       depositCharge: Number((order as { depositCharge?: Decimal }).depositCharge ?? 0),

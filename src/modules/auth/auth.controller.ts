@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Headers, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Body, Headers, HttpCode, HttpStatus, Patch, UseGuards, Req } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -6,8 +6,10 @@ import {
   ApiHeader,
   ApiCreatedResponse,
   ApiOkResponse,
+  ApiBearerAuth,
   getSchemaPath,
 } from '@nestjs/swagger';
+import { Request } from 'express';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { RegisterOwnerDto } from './dto/register-owner.dto';
@@ -16,6 +18,7 @@ import { SendLoginOtpDto } from './dto/send-login-otp.dto';
 import { DeliveryPartnerLoginDto } from './dto/delivery-partner-login.dto';
 import { RefreshTokenDto } from './dto/refresh.dto';
 import { LogoutDto } from './dto/logout.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import {
   AuthResponseDto,
   DeliveryPartnerAuthResponseDto,
@@ -26,6 +29,11 @@ import {
   ApiUnauthorizedResponseDto,
   LogoutResponseDto,
 } from '../../common/swagger/swagger-response.dto';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
+
+interface RequestWithUser extends Request {
+  user: { id: string };
+}
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -257,5 +265,18 @@ export class AuthController {
   @ApiOkResponse({ description: 'Refresh token removed.', type: LogoutResponseDto })
   async logout(@Body() dto: LogoutDto): Promise<{ success: boolean }> {
     return this.authService.logout(dto.refreshToken);
+  }
+
+  @Patch('me')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Update my profile name',
+    description: 'Updates the authenticated user display name used across account and address defaults.',
+  })
+  @ApiOkResponse({ description: 'Updated user profile fields.' })
+  @ApiResponse({ status: 401, description: 'Missing/invalid access token.', type: ApiUnauthorizedResponseDto })
+  async updateMe(@Req() req: RequestWithUser, @Body() dto: UpdateProfileDto) {
+    return this.authService.updateProfile(req.user.id, dto.name);
   }
 }

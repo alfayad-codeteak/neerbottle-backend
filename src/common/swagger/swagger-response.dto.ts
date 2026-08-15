@@ -170,7 +170,7 @@ export class ProductResponseDto {
   @ApiPropertyOptional({ nullable: true, description: 'Maximum retail price' })
   mrp: number | null;
 
-  @ApiProperty({ description: 'Per-unit handling fee (catalog field; not added to order totals)' })
+  @ApiProperty({ description: 'Per-unit handling fee included in order/quote totals × quantity' })
   handlingFee: number;
 
   @ApiProperty({
@@ -330,6 +330,9 @@ export class OrderResponseDto {
   @ApiProperty()
   totalAmount: number;
 
+  @ApiProperty({ description: 'Sum of product handling fees for this order' })
+  handlingTotal: number;
+
   @ApiProperty({ description: 'Deposit base before promo discount' })
   depositBase: number;
 
@@ -365,6 +368,9 @@ export class OrderQuoteResponseDto {
   @ApiProperty({ description: 'Sum of line totals (products only)' })
   itemsSubtotal: number;
 
+  @ApiProperty({ description: 'Sum of handling fees (handlingFee × quantity)' })
+  handlingTotal: number;
+
   @ApiProperty()
   depositEnabled: boolean;
 
@@ -389,7 +395,7 @@ export class OrderQuoteResponseDto {
   @ApiProperty()
   depositCharge: number;
 
-  @ApiProperty({ description: 'itemsSubtotal + depositCharge' })
+  @ApiProperty({ description: 'itemsSubtotal + handlingTotal + depositCharge' })
   totalAmount: number;
 
   @ApiProperty({ description: 'Applied promo discount percent on deposit (0 if none)' })
@@ -473,6 +479,9 @@ export class AddressRecordDto {
   id: string;
 
   @ApiPropertyOptional({ nullable: true })
+  name: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
   label: string | null;
 
   @ApiProperty()
@@ -501,6 +510,9 @@ export class AddressRecordDto {
 export class MyAddressResponseDto {
   @ApiProperty()
   id: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  name: string | null;
 
   @ApiPropertyOptional({ nullable: true })
   label: string | null;

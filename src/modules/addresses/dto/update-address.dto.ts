@@ -2,6 +2,12 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsString, IsOptional, IsBoolean, MinLength } from 'class-validator';
 
 export class UpdateAddressDto {
+  @ApiPropertyOptional({ example: 'Rahul Sharma' })
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  name?: string;
+
   @ApiPropertyOptional({ example: 'Office' })
   @IsOptional()
   @IsString()

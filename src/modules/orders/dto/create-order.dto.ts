@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsString, IsArray, IsIn, ValidateNested, ArrayMinSize, IsInt, Min, IsOptional, IsBoolean } from 'class-validator';
 import { Type } from 'class-transformer';
 import { PAYMENT_METHODS } from '../orders.constants';
@@ -19,12 +19,14 @@ export class CreateOrderDto {
   @IsString()
   addressId: string;
 
-  @ApiProperty({
-    example: '10:00-12:00',
-    description: 'Customer-selected delivery window label (opaque string stored on order)',
+  @ApiPropertyOptional({
+    example: '07:00-09:00',
+    description:
+      'Optional delivery window. When omitted or empty, the earliest default slot (07:00-09:00) is used.',
   })
+  @IsOptional()
   @IsString()
-  timeSlot: string;
+  timeSlot?: string;
 
   @ApiProperty({
     enum: PAYMENT_METHODS,

@@ -25,6 +25,7 @@ export class AddressesService {
     const address = await this.prisma.address.create({
       data: {
         userId,
+        name: dto.name ?? null,
         label: dto.label ?? null,
         line1: dto.line1,
         line2: dto.line2 ?? null,
@@ -54,6 +55,7 @@ export class AddressesService {
     const updated = await this.prisma.address.update({
       where: { id },
       data: {
+        ...(dto.name !== undefined && { name: dto.name || null }),
         ...(dto.label !== undefined && { label: dto.label || null }),
         ...(dto.line1 != null && { line1: dto.line1 }),
         ...(dto.line2 !== undefined && { line2: dto.line2 || null }),
@@ -70,6 +72,7 @@ export class AddressesService {
   private toResponse(a: {
     id: string;
     userId: string;
+    name: string | null;
     label: string | null;
     line1: string;
     line2: string | null;
@@ -83,6 +86,7 @@ export class AddressesService {
   }) {
     return {
       id: a.id,
+      name: a.name,
       label: a.label,
       line1: a.line1,
       line2: a.line2,

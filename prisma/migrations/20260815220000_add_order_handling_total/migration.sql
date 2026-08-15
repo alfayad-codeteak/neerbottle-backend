@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Order" ADD COLUMN IF NOT EXISTS "handlingTotal" DECIMAL(12,2) NOT NULL DEFAULT 0;
