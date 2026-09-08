@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
   ForbiddenException,
@@ -24,6 +25,8 @@ const orderFullInclude = {
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly depositsService: DepositsService,
@@ -93,7 +96,12 @@ export class OrdersService {
       where: { id: created.id },
       include: orderFullInclude,
     });
-    await this.notifyOrderChanged(created.id, { created: true });
+    try {
+      await this.notifyOrderChanged(created.id, { created: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Order ${created.id} saved but notify failed: ${msg}`);
+    }
     return this.toOrderResponse(full!);
   }
 
@@ -468,6 +476,15 @@ export class OrdersService {
   }
 
   async notifyOrderChanged(orderId: string, opts?: { created?: boolean }) {
+    try {
+      await this.notifyOrderChangedUnsafe(orderId, opts);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`notifyOrderChanged(${orderId}) failed: ${msg}`);
+    }
+  }
+
+  private async notifyOrderChangedUnsafe(orderId: string, opts?: { created?: boolean }) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: orderFullInclude,
@@ -517,11 +534,17 @@ export class OrdersService {
   }
 
   private async isPartnerSelfAssignEnabled() {
-    const row = await this.prisma.dispatchSettings.findUnique({
-      where: { id: 'default' },
-      select: { partnerSelfAssignEnabled: true },
-    });
-    return row?.partnerSelfAssignEnabled ?? true;
+    try {
+      const row = await this.prisma.dispatchSettings.findUnique({
+        where: { id: 'default' },
+        select: { partnerSelfAssignEnabled: true },
+      });
+      return row?.partnerSelfAssignEnabled ?? true;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`DispatchSettings unavailable, defaulting self-assign on: ${msg}`);
+      return true;
+    }
   }
 
   async updateStatus(orderId: string, status: string) {
