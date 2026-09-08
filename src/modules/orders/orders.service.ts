@@ -46,7 +46,9 @@ export class OrdersService {
     const handlingTotal = quote.handlingTotal;
     const finalTotalAmount = quote.finalTotalAmount;
 
-    const created = await this.prisma.$transaction(async (tx) => {
+    let created;
+    try {
+      created = await this.prisma.$transaction(async (tx) => {
       const orderNumber = await this.allocatePublicOrderNumber(tx);
       const createdOrder = await tx.order.create({
         data: {
@@ -95,6 +97,11 @@ export class OrdersService {
 
       return createdOrder;
     });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`POST /orders create failed: ${msg}`);
+      throw err;
+    }
 
     const full = await this.prisma.order.findUnique({
       where: { id: created.id },
@@ -264,8 +271,16 @@ export class OrdersService {
     if (!normalized) {
       throw new NotFoundException('Order not found');
     }
-    const order = await this.prisma.order.findUnique({
-      where: { orderNumber: normalized },
+    const stripped = normalized.replace(/^0+/, '') || '0';
+    const candidates = [...new Set([normalized, stripped])];
+
+    const order = await this.prisma.order.findFirst({
+      where: {
+        OR: [
+          { orderNumber: { in: candidates } },
+          { id: normalized },
+        ],
+      },
       include: orderFullInclude,
     });
     if (!order) {
@@ -543,13 +558,16 @@ export class OrdersService {
 
   private async allocatePublicOrderNumber(tx: Prisma.TransactionClient): Promise<string> {
     const prefix = publicOrderDatePrefix();
-    const last = await tx.order.findFirst({
-      where: { orderNumber: { startsWith: prefix } },
-      orderBy: { orderNumber: 'desc' },
-      select: { orderNumber: true },
-    });
-    const prev = last?.orderNumber?.startsWith(prefix)
-      ? Number.parseInt(last.orderNumber.slice(prefix.length), 10)
+    const rows = await tx.$queryRaw<Array<{ orderNumber: string }>>(Prisma.sql`
+      SELECT "orderNumber"::text AS "orderNumber"
+      FROM "Order"
+      WHERE "orderNumber"::text LIKE ${`${prefix}%`}
+      ORDER BY "orderNumber"::text DESC
+      LIMIT 1
+    `);
+    const last = rows[0]?.orderNumber ?? '';
+    const prev = last.startsWith(prefix)
+      ? Number.parseInt(last.slice(prefix.length), 10)
       : 0;
     const seq = (Number.isFinite(prev) ? prev : 0) + 1;
     return formatPublicOrderNumber(prefix, seq);

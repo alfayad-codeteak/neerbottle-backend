@@ -1,14 +1,11 @@
-/** IST calendar prefix DDMMYYYY, e.g. 8 Sep 2026 → 08092026 */
+/** IST calendar prefix DDMMYYYY without relying on ICU timezone data. */
 export function publicOrderDatePrefix(at = new Date()): string {
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Kolkata',
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  }).formatToParts(at);
-  const pick = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((p) => p.type === type)?.value ?? '';
-  return `${pick('day')}${pick('month')}${pick('year')}`;
+  const istMs = at.getTime() + 5.5 * 60 * 60 * 1000;
+  const ist = new Date(istMs);
+  const dd = String(ist.getUTCDate()).padStart(2, '0');
+  const mm = String(ist.getUTCMonth() + 1).padStart(2, '0');
+  const yyyy = String(ist.getUTCFullYear());
+  return `${dd}${mm}${yyyy}`;
 }
 
 export function formatPublicOrderNumber(prefix: string, seq: number): string {
