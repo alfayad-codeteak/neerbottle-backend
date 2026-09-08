@@ -14,6 +14,7 @@ import { STATUS_FLOW, OrderStatus } from './orders.constants';
 import { nextDeliveryStatus } from './delivery.constants';
 import { DepositsService } from '../deposits/deposits.service';
 import { OrdersGateway } from './orders.gateway';
+import { PushService } from '../push/push.service';
 import { Prisma } from '../../generated/prisma';
 import { formatPublicOrderNumber, publicOrderDatePrefix } from './order-number';
 
