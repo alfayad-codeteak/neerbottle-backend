@@ -135,5 +135,27 @@ export class PushService {
       });
     }
   }
+
+  /** Ping every online partner that a new job is waiting to be accepted. */
+  async notifyOrderOffered(args: { orderId: string; status: string }) {
+    const partners = await this.prisma.deliveryPartner.findMany({
+      where: { isAvailable: true },
+      select: { userId: true },
+    });
+    const baseData = {
+      orderId: args.orderId,
+      status: args.status,
+      deliveryStatus: 'NONE',
+    };
+    await Promise.all(
+      partners.map((p) =>
+        this.sendToUser(p.userId, {
+          title: 'New order available',
+          body: 'A new delivery is waiting. Accept it to take the job.',
+          data: { type: 'order.offered', audience: 'deliveryPartner', ...baseData },
+        }),
+      ),
+    );
+  }
 }
 

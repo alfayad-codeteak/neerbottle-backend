@@ -437,6 +437,14 @@ export class DeliveryPartnerResponseDto {
   updatedAt: string;
 }
 
+export class DispatchSettingsResponseDto {
+  @ApiProperty({ description: 'When true, partners get order.offered and may POST .../accept' })
+  partnerSelfAssignEnabled: boolean;
+
+  @ApiProperty()
+  updatedAt: string;
+}
+
 export class CustomerListRowDto {
   @ApiProperty()
   id: string;
@@ -634,6 +642,7 @@ export const SWAGGER_EXTRA_MODELS = [
   OrderResponseDto,
   OrderQuoteResponseDto,
   DeliveryPartnerResponseDto,
+  DispatchSettingsResponseDto,
   CustomerListRowDto,
   PaginatedCustomersResponseDto,
   AddressRecordDto,

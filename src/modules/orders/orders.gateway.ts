@@ -14,6 +14,7 @@ import { secretFromConfig } from '../../config/secret-from-env';
 import { PrismaService } from '../../prisma/prisma.service';
 
 const ADMIN_ROOM = 'admins';
+const PARTNERS_ROOM = 'partners';
 
 @WebSocketGateway({
   namespace: '/orders',
@@ -63,6 +64,10 @@ export class OrdersGateway implements OnGatewayConnection {
       if (user?.role === 'admin' || user?.role === 'owner') {
         client.data.role = user.role;
         await client.join(ADMIN_ROOM);
+      }
+      if (user?.role === 'deliveryPartner') {
+        client.data.role = user.role;
+        await client.join(PARTNERS_ROOM);
       }
     } catch {
       client.disconnect();
@@ -119,5 +124,19 @@ export class OrdersGateway implements OnGatewayConnection {
   emitOrderCreated(payload: Record<string, unknown>) {
     if (!this.server) return;
     this.server.to(ADMIN_ROOM).emit('order.created', payload);
+  }
+
+  /** Broadcast an unassigned order so online partners can accept it. */
+  emitOrderOffered(payload: Record<string, unknown>) {
+    if (!this.server) return;
+    this.server.to(PARTNERS_ROOM).emit('order.offered', payload);
+    this.server.to(ADMIN_ROOM).emit('order.offered', payload);
+  }
+
+  /** First partner accepted (or admin assigned) — others should drop the offer. */
+  emitOrderOfferedTaken(payload: Record<string, unknown>) {
+    if (!this.server) return;
+    this.server.to(PARTNERS_ROOM).emit('order.offered.taken', payload);
+    this.server.to(ADMIN_ROOM).emit('order.offered.taken', payload);
   }
 }

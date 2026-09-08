@@ -54,8 +54,9 @@ async function bootstrap() {
         '**Roles** — `customer`, `owner`, `admin` (scoped by permissions), `deliveryPartner`.',
         '',
         '**Real-time** — Customers, partners, and admins subscribe to Socket.IO namespace `/orders` with the same JWT;',
-        'admins join an `admins` room automatically. The server emits `order.created` when a customer places an order',
-        'and `order.updated` when order data changes (not documented as REST here).',
+        'admins join an `admins` room; delivery partners join a `partners` room. The server emits `order.created` when a customer places an order,',
+        '`order.offered` to available partners for self-assign, `order.offered.taken` when someone accepts (or admin assigns),',
+        'and `order.updated` / `order.assigned` when order data changes (not documented as REST here).',
       ].join('\n'),
     )
     .setVersion('1.0')

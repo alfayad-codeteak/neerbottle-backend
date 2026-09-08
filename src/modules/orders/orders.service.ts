@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  ConflictException,
 } from '@nestjs/common';
 import { Decimal } from '@prisma/client/runtime/library';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -388,6 +389,60 @@ export class OrdersService {
     return this.toOrderResponse(updated, true);
   }
 
+  /** Unassigned jobs that an online partner may accept (first accept wins). */
+  async findOpenOrdersForDeliveryPartner() {
+    if (!(await this.isPartnerSelfAssignEnabled())) {
+      return [];
+    }
+    const orders = await this.prisma.order.findMany({
+      where: {
+        deliveryPartnerId: null,
+        deliveryStatus: 'NONE',
+        status: { not: 'CANCELLED' },
+      },
+      include: orderFullInclude,
+      orderBy: { createdAt: 'desc' },
+    });
+    return orders.map((o) => this.toOrderResponse(o, true));
+  }
+
+  async acceptOrderByPartner(partnerUserId: string, orderId: string) {
+    if (!(await this.isPartnerSelfAssignEnabled())) {
+      throw new BadRequestException('Partner self-assign is turned off. Wait for admin to assign the order.');
+    }
+    const partner = await this.prisma.deliveryPartner.findUnique({ where: { userId: partnerUserId } });
+    if (!partner) throw new NotFoundException('Delivery partner not found');
+    if (!partner.isAvailable) {
+      throw new BadRequestException('Go online before accepting orders');
+    }
+
+    const claimed = await this.prisma.order.updateMany({
+      where: {
+        id: orderId,
+        deliveryPartnerId: null,
+        deliveryStatus: 'NONE',
+        status: { not: 'CANCELLED' },
+      },
+      data: {
+        deliveryPartnerId: partner.id,
+        assignedAt: new Date(),
+        deliveryStatus: 'ASSIGNED',
+      },
+    });
+    if (claimed.count === 0) {
+      const existing = await this.prisma.order.findUnique({ where: { id: orderId } });
+      if (!existing) throw new NotFoundException('Order not found');
+      throw new ConflictException('This order was already taken');
+    }
+
+    const updated = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: orderFullInclude,
+    });
+    await this.notifyOrderChanged(orderId);
+    return this.toOrderResponse(updated!, true);
+  }
+
   async notifyOrderChanged(orderId: string, opts?: { created?: boolean }) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
@@ -405,7 +460,22 @@ export class OrdersService {
       this.ordersGateway.emitOrderCreated(body as Record<string, unknown>);
     }
 
-    // Push notification for customer devices (FCM).
+    const isOpenOffer =
+      !order.deliveryPartnerId &&
+      (order.deliveryStatus ?? 'NONE') === 'NONE' &&
+      order.status !== 'CANCELLED';
+    const selfAssignOn = await this.isPartnerSelfAssignEnabled();
+    if (opts?.created && isOpenOffer && selfAssignOn) {
+      this.ordersGateway.emitOrderOffered(body as Record<string, unknown>);
+    }
+    if (!opts?.created && order.deliveryStatus === 'ASSIGNED' && order.deliveryPartnerId) {
+      this.ordersGateway.emitOrderOfferedTaken({
+        orderId: order.id,
+        deliveryPartnerId: order.deliveryPartnerId,
+        deliveryPartnerUserId: order.deliveryPartner?.userId ?? undefined,
+      });
+    }
+
     // Socket.IO covers foreground live updates; FCM covers background/killed apps.
     await this.pushService.notifyOrderUpdated({
       customerUserId: order.userId,
@@ -414,6 +484,20 @@ export class OrdersService {
       status: order.status,
       deliveryStatus: order.deliveryStatus ?? undefined,
     });
+    if (opts?.created && isOpenOffer && selfAssignOn) {
+      await this.pushService.notifyOrderOffered({
+        orderId: order.id,
+        status: order.status,
+      });
+    }
+  }
+
+  private async isPartnerSelfAssignEnabled() {
+    const row = await this.prisma.dispatchSettings.findUnique({
+      where: { id: 'default' },
+      select: { partnerSelfAssignEnabled: true },
+    });
+    return row?.partnerSelfAssignEnabled ?? true;
   }
 
   async updateStatus(orderId: string, status: string) {

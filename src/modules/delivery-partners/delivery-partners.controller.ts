@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Patch,
+  Post,
   Param,
   Body,
   UseGuards,
@@ -25,7 +26,7 @@ import { OrdersService } from '../orders/orders.service';
 import { UpdateMyDeliveryPartnerDto } from './dto/update-my-delivery-partner.dto';
 import { UpdatePartnerDeliveryStatusDto } from './dto/update-partner-delivery-status.dto';
 import { ConfirmCansReceivedDto } from './dto/confirm-cans-received.dto';
-import { ApiErrorResponseDto, DeliveryPartnerResponseDto, OrderResponseDto } from '../../common/swagger/swagger-response.dto';
+import { ApiErrorResponseDto, DeliveryPartnerResponseDto, DispatchSettingsResponseDto, OrderResponseDto } from '../../common/swagger/swagger-response.dto';
 
 interface RequestWithUser extends Request {
   user: { id: string; role: string };
@@ -66,6 +67,19 @@ export class DeliveryPartnersController {
     return this.deliveryPartnersService.updateMyProfile(req.user.id, dto);
   }
 
+  @Get('self-assign')
+  @UseGuards(JwtAuthGuard, DeliveryPartnerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Whether partner self-assign is enabled',
+    description:
+      'Admin-controlled. When false, hide Accept / available-orders UI; wait for admin assignment (`order.assigned`).',
+  })
+  @ApiOkResponse({ type: DispatchSettingsResponseDto })
+  getSelfAssign() {
+    return this.deliveryPartnersService.getDispatchSettings();
+  }
+
   @Get('my-orders')
   @UseGuards(JwtAuthGuard, DeliveryPartnerGuard)
   @ApiBearerAuth()
@@ -77,6 +91,40 @@ export class DeliveryPartnersController {
   @ApiOkResponse({ type: OrderResponseDto, isArray: true })
   myOrders(@Req() req: RequestWithUser) {
     return this.ordersService.findOrdersForDeliveryPartner(req.user.id);
+  }
+
+  @Get('available-orders')
+  @UseGuards(JwtAuthGuard, DeliveryPartnerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Open orders available to accept',
+    description:
+      'Unassigned orders (`deliveryStatus: NONE`). Partner must be online (`isAvailable`) to accept. First `POST .../accept` wins.',
+  })
+  @ApiOkResponse({ type: OrderResponseDto, isArray: true })
+  availableOrders() {
+    return this.ordersService.findOpenOrdersForDeliveryPartner();
+  }
+
+  @Post('orders/:orderId/accept')
+  @UseGuards(JwtAuthGuard, DeliveryPartnerGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Accept (self-assign) an open order',
+    description: [
+      'Claims an unassigned order for this partner: `deliveryStatus` becomes `ASSIGNED`.',
+      'Fails with 409 if another partner already took it, or admin assigned it.',
+      'Requires `isAvailable: true`.',
+    ].join('\n'),
+  })
+  @ApiParam({ name: 'orderId', description: 'Order UUID' })
+  @ApiOkResponse({ description: 'Assigned order snapshot.', type: OrderResponseDto })
+  @ApiResponse({ status: 400, description: 'Partner is offline.', type: ApiErrorResponseDto })
+  @ApiResponse({ status: 409, description: 'Order already taken.', type: ApiErrorResponseDto })
+  @ApiResponse({ status: 404, type: ApiErrorResponseDto })
+  acceptOrder(@Req() req: RequestWithUser, @Param('orderId') orderId: string) {
+    return this.ordersService.acceptOrderByPartner(req.user.id, orderId);
   }
 
   @Get('my-order-history')

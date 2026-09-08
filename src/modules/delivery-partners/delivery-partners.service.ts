@@ -126,6 +126,34 @@ export class DeliveryPartnersService {
     return this.toResponse(updated);
   }
 
+  async getDispatchSettings() {
+    const row = await this.ensureDispatchSettings();
+    return {
+      partnerSelfAssignEnabled: row.partnerSelfAssignEnabled,
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  }
+
+  async updateDispatchSettings(partnerSelfAssignEnabled: boolean) {
+    await this.ensureDispatchSettings();
+    const row = await this.prisma.dispatchSettings.update({
+      where: { id: 'default' },
+      data: { partnerSelfAssignEnabled },
+    });
+    return {
+      partnerSelfAssignEnabled: row.partnerSelfAssignEnabled,
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  }
+
+  private async ensureDispatchSettings() {
+    const existing = await this.prisma.dispatchSettings.findUnique({ where: { id: 'default' } });
+    if (existing) return existing;
+    return this.prisma.dispatchSettings.create({
+      data: { id: 'default', partnerSelfAssignEnabled: true },
+    });
+  }
+
   private toResponse(p: {
     id: string;
     userId: string;
