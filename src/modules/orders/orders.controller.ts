@@ -31,7 +31,7 @@ export class OrdersController {
     description: [
       'Validates address ownership, stock, payment method, and deposit rules.',
       '`returnedCanCount` reduces chargeable cans for deposit calculation when deposits are enabled.',
-      'Emits real-time `order.updated` to the customer (Socket.IO `/orders`).',
+      'Emits real-time `order.created` to admins and `order.updated` to the customer (Socket.IO `/orders`).',
     ].join('\n'),
   })
   @ApiCreatedResponse({

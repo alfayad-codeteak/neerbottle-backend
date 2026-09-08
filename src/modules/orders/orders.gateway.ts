@@ -11,6 +11,9 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { secretFromConfig } from '../../config/secret-from-env';
+import { PrismaService } from '../../prisma/prisma.service';
+
+const ADMIN_ROOM = 'admins';
 
 @WebSocketGateway({
   namespace: '/orders',
@@ -25,6 +28,7 @@ export class OrdersGateway implements OnGatewayConnection {
   constructor(
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async handleConnection(client: Socket) {
@@ -51,6 +55,15 @@ export class OrdersGateway implements OnGatewayConnection {
       const userId = payload.sub;
       client.data.userId = userId;
       await client.join(`user:${userId}`);
+
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { role: true },
+      });
+      if (user?.role === 'admin' || user?.role === 'owner') {
+        client.data.role = user.role;
+        await client.join(ADMIN_ROOM);
+      }
     } catch {
       client.disconnect();
     }
@@ -90,6 +103,7 @@ export class OrdersGateway implements OnGatewayConnection {
     const deliveryStatus = payload.deliveryStatus as string | undefined;
 
     this.server.to(`user:${userId}`).emit('order.updated', payload);
+    this.server.to(ADMIN_ROOM).emit('order.updated', payload);
     if (partnerUserId && partnerUserId !== userId) {
       this.server.to(`user:${partnerUserId}`).emit('order.updated', payload);
       if (deliveryStatus === 'ASSIGNED') {
@@ -99,5 +113,11 @@ export class OrdersGateway implements OnGatewayConnection {
     if (orderId) {
       this.server.to(`order:${orderId}`).emit('order.updated', payload);
     }
+  }
+
+  /** Live ping for admin portals when a customer places an order. */
+  emitOrderCreated(payload: Record<string, unknown>) {
+    if (!this.server) return;
+    this.server.to(ADMIN_ROOM).emit('order.created', payload);
   }
 }

@@ -92,7 +92,7 @@ export class OrdersService {
       where: { id: created.id },
       include: orderFullInclude,
     });
-    await this.notifyOrderChanged(created.id);
+    await this.notifyOrderChanged(created.id, { created: true });
     return this.toOrderResponse(full!);
   }
 
@@ -388,7 +388,7 @@ export class OrdersService {
     return this.toOrderResponse(updated, true);
   }
 
-  async notifyOrderChanged(orderId: string) {
+  async notifyOrderChanged(orderId: string, opts?: { created?: boolean }) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: orderFullInclude,
@@ -401,6 +401,9 @@ export class OrdersService {
       deliveryPartnerUserId: order.deliveryPartner?.userId ?? undefined,
     };
     this.ordersGateway.emitOrderUpdate(body as Record<string, unknown>);
+    if (opts?.created) {
+      this.ordersGateway.emitOrderCreated(body as Record<string, unknown>);
+    }
 
     // Push notification for customer devices (FCM).
     // Socket.IO covers foreground live updates; FCM covers background/killed apps.
