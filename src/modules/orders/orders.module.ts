@@ -4,12 +4,13 @@ import { DepositsModule } from '../deposits/deposits.module';
 import { PushModule } from '../push/push.module';
 import { OrdersController } from './orders.controller';
 import { AdminOrdersController } from './admin-orders.controller';
+import { PublicOrdersController } from './public-orders.controller';
 import { OrdersService } from './orders.service';
 import { OrdersGateway } from './orders.gateway';
 
 @Module({
   imports: [AuthModule, DepositsModule, PushModule],
-  controllers: [OrdersController, AdminOrdersController],
+  controllers: [OrdersController, AdminOrdersController, PublicOrdersController],
   providers: [OrdersService, OrdersGateway],
   exports: [OrdersService],
 })

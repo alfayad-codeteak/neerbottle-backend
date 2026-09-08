@@ -246,6 +246,30 @@ export class OrdersService {
     };
   }
 
+  /** Unauthenticated lookup by public sequential number. Limited fields (no phone/street). */
+  async publicTrackByNumber(orderNumber: number) {
+    const order = await this.prisma.order.findUnique({
+      where: { orderNumber },
+      include: orderFullInclude,
+    });
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+    return {
+      orderNumber: order.orderNumber,
+      status: order.status,
+      statusLabel: this.statusLabel(order.status),
+      deliveryStatus: order.deliveryStatus ?? 'NONE',
+      createdAt: order.createdAt.toISOString(),
+      city: order.address?.city ?? null,
+      pincode: order.address?.pincode ?? null,
+      items: order.items.map((i) => ({
+        name: i.product?.name ?? 'Item',
+        quantity: i.quantity,
+      })),
+    };
+  }
+
   async findAllAdmin(filters: { dateFrom?: string; dateTo?: string; status?: string; phone?: string; timeSlot?: string }) {
     const where: Record<string, unknown> = {};
     if (filters.status) where.status = filters.status;
@@ -567,6 +591,7 @@ export class OrdersService {
   private toOrderResponse(
     order: {
       id: string;
+      orderNumber?: number;
       userId: string;
       addressId: string;
       deliveryPartnerId?: string | null;
@@ -610,6 +635,7 @@ export class OrdersService {
     const deliveryPartner = order.deliveryPartner;
     const base = {
       id: order.id,
+      orderNumber: order.orderNumber ?? null,
       addressId: order.addressId,
       deliveryPartnerId: order.deliveryPartnerId ?? null,
       assignedAt: order.assignedAt?.toISOString() ?? null,

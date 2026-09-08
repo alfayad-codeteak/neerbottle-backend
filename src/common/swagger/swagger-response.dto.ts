@@ -294,6 +294,9 @@ export class OrderResponseDto {
   @ApiProperty()
   id: string;
 
+  @ApiProperty({ description: 'Public sequential order number (e.g. 1001). Show this to customers.' })
+  orderNumber: number;
+
   @ApiProperty()
   addressId: string;
 
@@ -400,6 +403,40 @@ export class OrderQuoteResponseDto {
 
   @ApiProperty({ description: 'Applied promo discount percent on deposit (0 if none)' })
   discountPercent: number;
+}
+
+export class PublicOrderStatusItemDto {
+  @ApiProperty()
+  name: string;
+
+  @ApiProperty()
+  quantity: number;
+}
+
+export class PublicOrderStatusDto {
+  @ApiProperty({ example: 1001, description: 'Customer-facing sequential order number' })
+  orderNumber: number;
+
+  @ApiProperty({ enum: ORDER_STATUS_ENUM })
+  status: string;
+
+  @ApiProperty({ example: 'On the way' })
+  statusLabel: string;
+
+  @ApiProperty({ enum: DELIVERY_STATUS_ENUM })
+  deliveryStatus: string;
+
+  @ApiProperty()
+  createdAt: string;
+
+  @ApiPropertyOptional({ description: 'City only — no street address on the public endpoint' })
+  city: string | null;
+
+  @ApiPropertyOptional()
+  pincode: string | null;
+
+  @ApiProperty({ type: [PublicOrderStatusItemDto] })
+  items: PublicOrderStatusItemDto[];
 }
 
 export class DeliveryPartnerResponseDto {
@@ -641,6 +678,7 @@ export const SWAGGER_EXTRA_MODELS = [
   UserSnippetDto,
   OrderResponseDto,
   OrderQuoteResponseDto,
+  PublicOrderStatusDto,
   DeliveryPartnerResponseDto,
   DispatchSettingsResponseDto,
   CustomerListRowDto,
