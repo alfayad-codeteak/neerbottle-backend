@@ -294,8 +294,11 @@ export class OrderResponseDto {
   @ApiProperty()
   id: string;
 
-  @ApiProperty({ description: 'Public sequential order number (e.g. 1001). Show this to customers.' })
-  orderNumber: number;
+  @ApiProperty({
+    example: '08092026001',
+    description: 'Public order number: DDMMYYYY + 3-digit daily sequence (IST). Example: first order on 8 Sep 2026 is 08092026001.',
+  })
+  orderNumber: string;
 
   @ApiProperty()
   addressId: string;
@@ -414,8 +417,8 @@ export class PublicOrderStatusItemDto {
 }
 
 export class PublicOrderStatusDto {
-  @ApiProperty({ example: 1001, description: 'Customer-facing sequential order number' })
-  orderNumber: number;
+  @ApiProperty({ example: '08092026001', description: 'DDMMYYYY + daily sequence (IST)' })
+  orderNumber: string;
 
   @ApiProperty({ enum: ORDER_STATUS_ENUM })
   status: string;

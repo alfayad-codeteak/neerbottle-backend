@@ -134,7 +134,7 @@ model PurchaseEntryItem {
 // ---- Orders ----
 model Order {
   id            String        @id @default(cuid())
-  orderNumber   Int           @unique @default(autoincrement())
+  orderNumber   String        @unique
   userId        String
   user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   addressId     String

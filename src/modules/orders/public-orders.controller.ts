@@ -1,7 +1,8 @@
-import { Controller, Get, Param, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, NotFoundException, Param } from '@nestjs/common';
 import { ApiOkResponse, ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
 import { ApiErrorResponseDto, PublicOrderStatusDto } from '../../common/swagger/swagger-response.dto';
+import { normalizePublicOrderNumber } from './order-number';
 
 @ApiTags('Orders')
 @Controller('orders')
@@ -12,12 +13,20 @@ export class PublicOrdersController {
   @ApiOperation({
     summary: 'Public order status by number',
     description:
-      'No login. Look up warehouse + delivery status using the sequential order number printed for the customer (e.g. 1001). Does not return phone, street address, or amounts.',
+      'No login. Number is DDMMYYYY + 3-digit daily sequence (IST), e.g. 08092026001 for the first order on 8 Sep 2026. Does not return phone, street address, or amounts.',
   })
-  @ApiParam({ name: 'orderNumber', example: 1001, description: 'Public order number (digits only)' })
+  @ApiParam({
+    name: 'orderNumber',
+    example: '08092026001',
+    description: 'Digits only. Keep leading zeros.',
+  })
   @ApiOkResponse({ type: PublicOrderStatusDto })
   @ApiResponse({ status: 404, description: 'Unknown order number.', type: ApiErrorResponseDto })
-  publicStatus(@Param('orderNumber', ParseIntPipe) orderNumber: number) {
-    return this.ordersService.publicTrackByNumber(orderNumber);
+  publicStatus(@Param('orderNumber') orderNumber: string) {
+    const normalized = normalizePublicOrderNumber(orderNumber);
+    if (normalized.length < 8) {
+      throw new NotFoundException('Order not found');
+    }
+    return this.ordersService.publicTrackByNumber(normalized);
   }
 }

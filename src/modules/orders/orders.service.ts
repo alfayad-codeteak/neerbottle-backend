@@ -14,7 +14,8 @@ import { STATUS_FLOW, OrderStatus } from './orders.constants';
 import { nextDeliveryStatus } from './delivery.constants';
 import { DepositsService } from '../deposits/deposits.service';
 import { OrdersGateway } from './orders.gateway';
-import { PushService } from '../push/push.service';
+import { Prisma } from '../../generated/prisma';
+import { formatPublicOrderNumber, publicOrderDatePrefix } from './order-number';
 
 const orderFullInclude = {
   items: { include: { product: true } },
@@ -45,8 +46,10 @@ export class OrdersService {
     const finalTotalAmount = quote.finalTotalAmount;
 
     const created = await this.prisma.$transaction(async (tx) => {
+      const orderNumber = await this.allocatePublicOrderNumber(tx);
       const createdOrder = await tx.order.create({
         data: {
+          orderNumber,
           userId,
           addressId: quote.address.id,
           timeSlot,
@@ -254,10 +257,14 @@ export class OrdersService {
     };
   }
 
-  /** Unauthenticated lookup by public sequential number. Limited fields (no phone/street). */
-  async publicTrackByNumber(orderNumber: number) {
+  /** Unauthenticated lookup by public order number (DDMMYYYY + daily seq). */
+  async publicTrackByNumber(orderNumber: string) {
+    const normalized = orderNumber.replace(/[^\d]/g, '');
+    if (!normalized) {
+      throw new NotFoundException('Order not found');
+    }
     const order = await this.prisma.order.findUnique({
-      where: { orderNumber },
+      where: { orderNumber: normalized },
       include: orderFullInclude,
     });
     if (!order) {
@@ -533,6 +540,20 @@ export class OrdersService {
     }
   }
 
+  private async allocatePublicOrderNumber(tx: Prisma.TransactionClient): Promise<string> {
+    const prefix = publicOrderDatePrefix();
+    const last = await tx.order.findFirst({
+      where: { orderNumber: { startsWith: prefix } },
+      orderBy: { orderNumber: 'desc' },
+      select: { orderNumber: true },
+    });
+    const prev = last?.orderNumber?.startsWith(prefix)
+      ? Number.parseInt(last.orderNumber.slice(prefix.length), 10)
+      : 0;
+    const seq = (Number.isFinite(prev) ? prev : 0) + 1;
+    return formatPublicOrderNumber(prefix, seq);
+  }
+
   private async isPartnerSelfAssignEnabled() {
     try {
       const row = await this.prisma.dispatchSettings.findUnique({
@@ -614,7 +635,7 @@ export class OrdersService {
   private toOrderResponse(
     order: {
       id: string;
-      orderNumber?: number;
+      orderNumber?: string;
       userId: string;
       addressId: string;
       deliveryPartnerId?: string | null;
