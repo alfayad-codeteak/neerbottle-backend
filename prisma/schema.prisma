@@ -97,6 +97,27 @@ model Product {
   updatedAt    DateTime    @updatedAt
   orderItems   OrderItem[]
   purchaseEntryItems PurchaseEntryItem[]
+  banners      Banner[]
+}
+
+model Banner {
+  id         String   @id @default(cuid())
+  title      String?
+  linkUrl    String?
+  productId  String?
+  product    Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  sortOrder  Int      @default(0)
+  isActive   Boolean  @default(true)
+  imageMime  String
+  imageBytes Bytes?
+  imageKey   String?
+  imageUrl   String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([sortOrder])
+  @@index([productId])
 }
 
 // ---- Purchase entries (inventory in) ----

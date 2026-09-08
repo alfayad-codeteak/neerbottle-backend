@@ -25,6 +25,7 @@
     "prisma:studio": "prisma studio"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1127.0",
     "@cloudflare/containers": "^0.3.3",
     "@nestjs/common": "^11.0.0",
     "@nestjs/config": "^4.0.0",

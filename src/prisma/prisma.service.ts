@@ -99,6 +99,52 @@ export class PrismaService
       `CREATE UNIQUE INDEX IF NOT EXISTS "Order_orderNumber_key" ON "Order"("orderNumber")`,
     );
 
+    await run(
+      'Banner table',
+      `CREATE TABLE IF NOT EXISTS "Banner" (
+        "id" TEXT PRIMARY KEY,
+        "title" TEXT,
+        "linkUrl" TEXT,
+        "sortOrder" INTEGER NOT NULL DEFAULT 0,
+        "isActive" BOOLEAN NOT NULL DEFAULT true,
+        "imageMime" TEXT NOT NULL,
+        "imageBytes" BYTEA,
+        "imageKey" TEXT,
+        "imageUrl" TEXT,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+    );
+    await run(
+      'Banner isActive index',
+      `CREATE INDEX IF NOT EXISTS "Banner_isActive_idx" ON "Banner"("isActive")`,
+    );
+    await run(
+      'Banner sortOrder index',
+      `CREATE INDEX IF NOT EXISTS "Banner_sortOrder_idx" ON "Banner"("sortOrder")`,
+    );
+
+    await run(
+      'Banner productId',
+      `ALTER TABLE "Banner" ADD COLUMN IF NOT EXISTS "productId" TEXT`,
+    );
+    await run(
+      'Banner productId index',
+      `CREATE INDEX IF NOT EXISTS "Banner_productId_idx" ON "Banner"("productId")`,
+    );
+    await run(
+      'Banner imageKey',
+      `ALTER TABLE "Banner" ADD COLUMN IF NOT EXISTS "imageKey" TEXT`,
+    );
+    await run(
+      'Banner imageUrl',
+      `ALTER TABLE "Banner" ADD COLUMN IF NOT EXISTS "imageUrl" TEXT`,
+    );
+    await run(
+      'Banner imageBytes nullable',
+      `ALTER TABLE "Banner" ALTER COLUMN "imageBytes" DROP NOT NULL`,
+    );
+
     this.logger.log('Runtime schema check finished');
   }
 

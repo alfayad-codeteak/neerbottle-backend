@@ -14,6 +14,8 @@ import { DeliveryPartnersModule } from './modules/delivery-partners/delivery-par
 import { PushModule } from './modules/push/push.module';
 import { DeliveryZonesModule } from './modules/delivery-zones/delivery-zones.module';
 import { PurchasesModule } from './modules/purchases/purchases.module';
+import { BannersModule } from './modules/banners/banners.module';
+import { R2StorageModule } from './modules/storage/r2-storage.module';
 
 @Module({
   imports: [
@@ -23,6 +25,7 @@ import { PurchasesModule } from './modules/purchases/purchases.module';
     }),
     PrismaModule,
     RedisModule,
+    R2StorageModule,
     HealthModule,
     AuthModule,
     ProductsModule,
@@ -35,6 +38,7 @@ import { PurchasesModule } from './modules/purchases/purchases.module';
     PushModule,
     DeliveryZonesModule,
     PurchasesModule,
+    BannersModule,
   ],
 })
 export class AppModule {}

@@ -428,6 +428,11 @@ Use Wrangler secrets for sensitive values:
 npx wrangler secret put DATABASE_URL
 npx wrangler secret put JWT_ACCESS_SECRET
 npx wrangler secret put JWT_REFRESH_SECRET
+npx wrangler secret put R2_ACCOUNT_ID
+npx wrangler secret put R2_ACCESS_KEY_ID
+npx wrangler secret put R2_SECRET_ACCESS_KEY
+npx wrangler secret put R2_BUCKET
+npx wrangler secret put R2_PUBLIC_BASE_URL
 ```
 
 Use Wrangler vars for non-sensitive values:
