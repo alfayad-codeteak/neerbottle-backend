@@ -1,6 +1,10 @@
 import { Container, getContainer } from '@cloudflare/containers';
 
 const LOCALHOST_ORIGINS = Array.from({ length: 6 }, (_, i) => `http://localhost:${3000 + i}`);
+const STOREFRONT_ORIGINS = [
+  'https://neerbottle.in',
+  'https://www.neerbottle.in',
+];
 
 function getAllowedOrigins(env: unknown): string[] {
   const e = env as Record<string, unknown>;
@@ -9,7 +13,7 @@ function getAllowedOrigins(env: unknown): string[] {
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);
-  return configured.length > 0 ? configured : LOCALHOST_ORIGINS;
+  return [...new Set([...STOREFRONT_ORIGINS, ...LOCALHOST_ORIGINS, ...configured])];
 }
 
 function withCors(response: Response, origin: string | null, allowedOrigins: string[]): Response {
@@ -128,6 +132,13 @@ export class ApiContainer extends Container {
       FCM_SERVICE_ACCOUNT_JSON: pick('FCM_SERVICE_ACCOUNT_JSON') ?? '',
       FCM_SERVICE_ACCOUNT_JSON_B64: pick('FCM_SERVICE_ACCOUNT_JSON_B64') ?? '',
       FCM_ANDROID_CHANNEL_ID: pick('FCM_ANDROID_CHANNEL_ID') ?? '',
+      STOREFRONT_URL: pick('STOREFRONT_URL') ?? '',
+      R2_ACCOUNT_ID: pick('R2_ACCOUNT_ID') ?? '',
+      R2_ACCESS_KEY_ID: pick('R2_ACCESS_KEY_ID') ?? '',
+      R2_SECRET_ACCESS_KEY: pick('R2_SECRET_ACCESS_KEY') ?? '',
+      R2_BUCKET: pick('R2_BUCKET') ?? '',
+      R2_PUBLIC_BASE_URL: pick('R2_PUBLIC_BASE_URL') ?? '',
+      R2_ENDPOINT: pick('R2_ENDPOINT') ?? '',
     };
   }
 }

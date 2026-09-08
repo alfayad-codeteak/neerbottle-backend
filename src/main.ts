@@ -12,6 +12,10 @@ import {
 } from './modules/auth/dto/auth-response.dto';
 
 const LOCALHOST_ORIGINS = Array.from({ length: 6 }, (_, i) => `http://localhost:${3000 + i}`);
+const STOREFRONT_ORIGINS = [
+  'https://neerbottle.in',
+  'https://www.neerbottle.in',
+];
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -20,7 +24,7 @@ async function bootstrap() {
     .split(',')
     .map((o) => o.trim())
     .filter(Boolean);
-  const allowedOrigins = envOrigins.length > 0 ? envOrigins : LOCALHOST_ORIGINS;
+  const allowedOrigins = [...new Set([...STOREFRONT_ORIGINS, ...LOCALHOST_ORIGINS, ...envOrigins])];
 
   app.enableCors({
     origin: allowedOrigins,
