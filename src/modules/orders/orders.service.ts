@@ -38,7 +38,7 @@ export class OrdersService {
     private readonly deliveryZones: DeliveryZonesService,
   ) {}
 
-  async create(userId: string, dto: CreateOrderDto) {
+  async create(userId: string, dto: CreateOrderDto, includeUser = false) {
     const timeSlot = (dto.timeSlot ?? '').trim() || '07:00-09:00';
     const quote = await this.buildQuote(userId, dto);
     const orderItems = quote.orderItems;
@@ -50,89 +50,80 @@ export class OrdersService {
 
     let created;
     try {
-      created = await this.prisma.$transaction(async (tx) => {
-      const orderNumber = await this.allocatePublicOrderNumber(tx);
-      const createdOrder = await tx.order.create({
-        data: {
-          orderNumber,
-          userId,
-          addressId: quote.address.id,
-          timeSlot,
-          paymentMethod: dto.paymentMethod,
-          status: 'RECEIVED',
-          ifCanRefund: quote.ifCanRefund,
-          returnedCanCount: quote.returnedCanCount,
-          totalAmount: finalTotalAmount,
-          handlingTotal,
-          depositBase,
-          depositDiscount,
-          depositCharge,
-          items: {
-            create: orderItems.map((i) => ({
-              productId: i.productId,
-              quantity: i.quantity,
-              unitPrice: i.unitPrice,
-            })),
-          },
+      created = await this.prisma.$transaction(
+        async (tx) => {
+          const orderNumber = await this.allocatePublicOrderNumber(tx);
+          const createdOrder = await tx.order.create({
+            data: {
+              orderNumber,
+              userId,
+              addressId: quote.address.id,
+              timeSlot,
+              paymentMethod: dto.paymentMethod,
+              status: 'RECEIVED',
+              ifCanRefund: quote.ifCanRefund,
+              returnedCanCount: quote.returnedCanCount,
+              totalAmount: finalTotalAmount,
+              handlingTotal,
+              depositBase,
+              depositDiscount,
+              depositCharge,
+              items: {
+                create: orderItems.map((i) => ({
+                  productId: i.productId,
+                  quantity: i.quantity,
+                  unitPrice: i.unitPrice,
+                })),
+              },
+            },
+            include: orderFullInclude,
+          });
+
+          await Promise.all(
+            orderItems.map((item) =>
+              tx.product.update({
+                where: { id: item.productId },
+                data: { stock: { decrement: item.quantity } },
+              }),
+            ),
+          );
+
+          if (Number(depositCharge) > 0) {
+            const charge = Number(depositCharge);
+            await tx.userDepositWallet.upsert({
+              where: { userId },
+              update: { balance: { increment: charge } },
+              create: { userId, balance: charge },
+            });
+            await tx.depositTransaction.create({
+              data: {
+                userId,
+                orderId: createdOrder.id,
+                type: 'CHARGE',
+                amount: charge,
+                note: 'Deposit charged for order',
+              },
+            });
+          }
+
+          return createdOrder;
         },
-        include: { items: { include: { product: true } }, address: true },
-      });
-
-      for (const item of orderItems) {
-        await tx.product.update({
-          where: { id: item.productId },
-          data: { stock: { decrement: item.quantity } },
-        });
-      }
-
-      if (Number(depositCharge) > 0) {
-        const charge = Number(depositCharge);
-        await tx.userDepositWallet.upsert({
-          where: { userId },
-          update: { balance: { increment: charge } },
-          create: { userId, balance: charge },
-        });
-        await tx.depositTransaction.create({
-          data: {
-            userId,
-            orderId: createdOrder.id,
-            type: 'CHARGE',
-            amount: charge,
-            note: 'Deposit charged for order',
-          },
-        });
-      }
-
-      return createdOrder;
-    });
+        { maxWait: 5_000, timeout: 15_000 },
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(`POST /orders create failed: ${msg}`);
       throw err;
     }
 
-    const full = await this.prisma.order.findUnique({
-      where: { id: created.id },
-      include: orderFullInclude,
-    });
-    try {
-      this.queueOrderNotify(created.id, { created: true });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Order ${created.id} saved but notify failed: ${msg}`);
-    }
-    return this.toOrderResponse(full!);
+    this.queueOrderNotify(created.id, { created: true });
+    return this.toOrderResponse(created, includeUser);
   }
 
   async createForCustomer(dto: AdminCreateOrderDto) {
     await this.assertCustomerExists(dto.userId);
     const { userId, ...orderDto } = dto;
-    const created = await this.create(userId, orderDto);
-    const full = await this.prisma.order.findUnique({
-      where: { id: created.id },
-      include: orderFullInclude,
-    });
-    return this.toOrderResponse(full!, true);
+    return this.create(userId, orderDto, true);
   }
 
   async quoteForCustomer(dto: AdminCreateOrderDto) {
@@ -169,9 +160,14 @@ export class OrdersService {
   }
 
   private async buildQuote(userId: string, dto: CreateOrderDto) {
-    const address = await this.prisma.address.findFirst({
-      where: { id: dto.addressId, userId },
-    });
+    const productIds = dto.items.map((i) => i.productId);
+    const [address, products, depositConfig] = await Promise.all([
+      this.prisma.address.findFirst({ where: { id: dto.addressId, userId } }),
+      this.prisma.product.findMany({
+        where: { id: { in: productIds }, isActive: true, stock: { gt: 0 } },
+      }),
+      this.depositsService.getRuntimeConfig(),
+    ]);
     if (!address) {
       throw new BadRequestException('Address not found or does not belong to you');
     }
@@ -180,10 +176,6 @@ export class OrdersService {
       address.lng == null ? null : Number(address.lng),
     );
 
-    const productIds = dto.items.map((i) => i.productId);
-    const products = await this.prisma.product.findMany({
-      where: { id: { in: productIds }, isActive: true, stock: { gt: 0 } },
-    });
     const productMap = new Map(products.map((p) => [p.id, p]));
 
     const orderItems: { productId: string; quantity: number; unitPrice: Decimal }[] = [];
@@ -220,7 +212,6 @@ export class OrdersService {
     const returnedForDeposit = Math.max(0, Math.min(returnedCanCount, depositEligibleQty));
     const chargeableCanCount = Math.max(0, depositEligibleQty - returnedForDeposit);
 
-    const depositConfig = await this.depositsService.getRuntimeConfig();
     const depositEnabled = depositConfig.enabled;
     const depositBase = depositEnabled
       ? new Decimal(depositConfig.perCanAmount).mul(chargeableCanCount)
@@ -339,12 +330,14 @@ export class OrdersService {
   }
 
   async assignOrderToPartner(orderId: string, deliveryPartnerId: string) {
-    const order = await this.prisma.order.findUnique({ where: { id: orderId } });
+    const [order, partner] = await Promise.all([
+      this.prisma.order.findUnique({ where: { id: orderId } }),
+      this.prisma.deliveryPartner.findUnique({ where: { id: deliveryPartnerId } }),
+    ]);
     if (!order) throw new NotFoundException('Order not found');
     if (order.status === 'CANCELLED') {
       throw new BadRequestException('Cannot assign a cancelled order');
     }
-    const partner = await this.prisma.deliveryPartner.findUnique({ where: { id: deliveryPartnerId } });
     if (!partner) throw new NotFoundException('Delivery partner not found');
     if (!partner.isAvailable) {
       throw new BadRequestException('Delivery partner is not available');
@@ -421,9 +414,11 @@ export class OrdersService {
     nextStatus: string,
     deliveryNotes?: string,
   ) {
-    const partner = await this.prisma.deliveryPartner.findUnique({ where: { userId: partnerUserId } });
+    const [partner, order] = await Promise.all([
+      this.prisma.deliveryPartner.findUnique({ where: { userId: partnerUserId } }),
+      this.prisma.order.findUnique({ where: { id: orderId } }),
+    ]);
     if (!partner) throw new NotFoundException('Delivery partner not found');
-    const order = await this.prisma.order.findUnique({ where: { id: orderId } });
     if (!order) throw new NotFoundException('Order not found');
     if (order.deliveryPartnerId !== partner.id) {
       throw new ForbiddenException('This order is not assigned to you');
@@ -455,9 +450,11 @@ export class OrdersService {
     orderId: string,
     deliveryNotes?: string,
   ) {
-    const partner = await this.prisma.deliveryPartner.findUnique({ where: { userId: partnerUserId } });
+    const [partner, order] = await Promise.all([
+      this.prisma.deliveryPartner.findUnique({ where: { userId: partnerUserId } }),
+      this.prisma.order.findUnique({ where: { id: orderId } }),
+    ]);
     if (!partner) throw new NotFoundException('Delivery partner not found');
-    const order = await this.prisma.order.findUnique({ where: { id: orderId } });
     if (!order) throw new NotFoundException('Order not found');
     if (order.deliveryPartnerId !== partner.id) {
       throw new ForbiddenException('This order is not assigned to you');
@@ -677,12 +674,14 @@ export class OrdersService {
 
   private async restoreStock(orderId: string) {
     const items = await this.prisma.orderItem.findMany({ where: { orderId } });
-    for (const item of items) {
-      await this.prisma.product.update({
-        where: { id: item.productId },
-        data: { stock: { increment: item.quantity } },
-      });
-    }
+    await Promise.all(
+      items.map((item) =>
+        this.prisma.product.update({
+          where: { id: item.productId },
+          data: { stock: { increment: item.quantity } },
+        }),
+      ),
+    );
   }
 
   private statusLabel(s: string): string {

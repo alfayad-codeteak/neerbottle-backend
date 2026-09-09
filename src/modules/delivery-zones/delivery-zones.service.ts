@@ -19,9 +19,26 @@ function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: num
 export class DeliveryZonesService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private activeZonesCache: { expiresAt: number; rows: Awaited<ReturnType<PrismaService['deliveryZone']['findMany']>> } | null =
+    null;
+  private static readonly ZONES_TTL_MS = 20_000;
+
+  private invalidateZoneCache() {
+    this.activeZonesCache = null;
+  }
+
+  private async loadActiveZones() {
+    const now = Date.now();
+    if (this.activeZonesCache && this.activeZonesCache.expiresAt > now) {
+      return this.activeZonesCache.rows;
+    }
+    const rows = await this.prisma.deliveryZone.findMany({ where: { isActive: true } });
+    this.activeZonesCache = { rows, expiresAt: now + DeliveryZonesService.ZONES_TTL_MS };
+    return rows;
+  }
+
   async create(dto: { name: string; centerLat: number; centerLng: number; radiusKm: number; isActive?: boolean }) {
-    return this.toZone(
-      await this.prisma.deliveryZone.create({
+    const zone = await this.prisma.deliveryZone.create({
       data: {
         name: dto.name,
         centerLat: dto.centerLat,
@@ -29,8 +46,9 @@ export class DeliveryZonesService {
         radiusKm: dto.radiusKm,
         isActive: dto.isActive ?? true,
       },
-    }),
-    );
+    });
+    this.invalidateZoneCache();
+    return this.toZone(zone);
   }
 
   async findAllAdmin() {
@@ -54,8 +72,7 @@ export class DeliveryZonesService {
 
   async update(id: string, dto: Partial<{ name: string; centerLat: number; centerLng: number; radiusKm: number; isActive: boolean }>) {
     await this.findOneAdmin(id);
-    return this.toZone(
-      await this.prisma.deliveryZone.update({
+    const zone = await this.prisma.deliveryZone.update({
       where: { id },
       data: {
         ...(dto.name !== undefined ? { name: dto.name } : {}),
@@ -64,13 +81,15 @@ export class DeliveryZonesService {
         ...(dto.radiusKm !== undefined ? { radiusKm: dto.radiusKm } : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
       },
-    }),
-    );
+    });
+    this.invalidateZoneCache();
+    return this.toZone(zone);
   }
 
   async remove(id: string) {
     await this.findOneAdmin(id);
     await this.prisma.deliveryZone.delete({ where: { id } });
+    this.invalidateZoneCache();
     return { success: true };
   }
 
@@ -78,10 +97,7 @@ export class DeliveryZonesService {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       throw new BadRequestException('lat and lng are required');
     }
-    const zones = await this.prisma.deliveryZone.findMany({
-      where: { isActive: true },
-      orderBy: { createdAt: 'desc' },
-    });
+    const zones = await this.loadActiveZones();
 
     const results = zones.map((z) => {
       const distanceKm = haversineKm(
@@ -117,7 +133,7 @@ export class DeliveryZonesService {
    * With no zones configured, delivery is not restricted.
    */
   async assertLocationServed(lat: number | null | undefined, lng: number | null | undefined) {
-    const zones = await this.prisma.deliveryZone.findMany({ where: { isActive: true } });
+    const zones = await this.loadActiveZones();
     if (zones.length === 0) return;
 
     if (lat == null || lng == null || !Number.isFinite(Number(lat)) || !Number.isFinite(Number(lng))) {
@@ -126,8 +142,15 @@ export class DeliveryZonesService {
       );
     }
 
-    const check = await this.checkAvailability(Number(lat), Number(lng));
-    if (!check.available) {
+    const pin = { lat: Number(lat), lng: Number(lng) };
+    const inside = zones.some((z) => {
+      const distanceKm = haversineKm(pin, {
+        lat: Number(z.centerLat),
+        lng: Number(z.centerLng),
+      });
+      return distanceKm <= Number(z.radiusKm);
+    });
+    if (!inside) {
       throw new BadRequestException(
         'This location is outside our delivery area. Move the pin into a marked zone.',
       );
