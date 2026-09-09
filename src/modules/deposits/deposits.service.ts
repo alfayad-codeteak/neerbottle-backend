@@ -1,13 +1,18 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException, forwardRef } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma';
 import { PrismaService } from '../../prisma/prisma.service';
+import { OrdersGateway } from '../orders/orders.gateway';
 import { UpdateDepositConfigDto } from './dto/update-deposit-config.dto';
 import { AdminAdjustDepositDto } from './dto/admin-adjust-deposit.dto';
 import { TopUpDepositDto } from './dto/top-up-deposit.dto';
 
 @Injectable()
 export class DepositsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(forwardRef(() => OrdersGateway))
+    private readonly ordersGateway: OrdersGateway,
+  ) {}
 
   private runtimeConfigCache: {
     value: Awaited<ReturnType<DepositsService['loadRuntimeConfig']>>;
@@ -52,8 +57,33 @@ export class DepositsService {
   }
 
   async getMyWallet(userId: string) {
-    const wallet = await this.ensureWallet(userId);
-    return this.toWalletResponse(wallet.balance);
+    const balance = await this.getHeldDepositBalance(userId);
+    await this.prisma.userDepositWallet.upsert({
+      where: { userId },
+      update: { balance },
+      create: { userId, balance },
+    });
+    return this.toWalletResponse(balance);
+  }
+
+  /** Outstanding deposit: charges/credits minus refunds. */
+  async getHeldDepositBalance(userId: string): Promise<number> {
+    const rows = await this.prisma.depositTransaction.groupBy({
+      by: ['type'],
+      where: { userId },
+      _sum: { amount: true },
+    });
+    if (rows.length === 0) {
+      const wallet = await this.ensureWallet(userId);
+      return Math.max(0, Number(wallet.balance));
+    }
+    let net = 0;
+    for (const row of rows) {
+      const amount = Number(row._sum.amount ?? 0);
+      if (['CHARGE', 'TOP_UP', 'ADMIN_CREDIT'].includes(row.type)) net += amount;
+      else if (['REFUND', 'ADMIN_DEBIT'].includes(row.type)) net -= amount;
+    }
+    return Math.max(0, net);
   }
 
   async topUpMyWallet(userId: string, dto: TopUpDepositDto) {
@@ -72,6 +102,7 @@ export class DepositsService {
         },
       }),
     ]);
+    await this.pushWallet(userId, Number(wallet.balance));
     return this.toWalletResponse(wallet.balance);
   }
 
@@ -97,6 +128,7 @@ export class DepositsService {
         },
       }),
     ]);
+    await this.pushWallet(userId, Number(wallet.balance));
     return this.toWalletResponse(wallet.balance);
   }
 
@@ -166,17 +198,22 @@ export class DepositsService {
       throw new BadRequestException('No deposit charged for this order');
     }
 
-    await this.prisma.$transaction([
-      this.prisma.userDepositWallet.upsert({
+    await this.prisma.$transaction(async (tx) => {
+      const wallet = await tx.userDepositWallet.upsert({
         where: { userId: order.userId },
-        update: { balance: { increment: amount } },
-        create: { userId: order.userId, balance: amount },
-      }),
-      this.prisma.order.update({
+        update: {},
+        create: { userId: order.userId, balance: 0 },
+      });
+      const nextBalance = Math.max(0, Number(wallet.balance) - amount);
+      await tx.userDepositWallet.update({
+        where: { userId: order.userId },
+        data: { balance: nextBalance },
+      });
+      await tx.order.update({
         where: { id: orderId },
         data: { depositRefundedAt: new Date() },
-      }),
-      this.prisma.depositTransaction.create({
+      });
+      await tx.depositTransaction.create({
         data: {
           userId: order.userId,
           orderId: order.id,
@@ -185,15 +222,20 @@ export class DepositsService {
           note: 'Can return refund',
           createdById: actorId,
         },
-      }),
-    ]);
+      });
+    });
 
     const wallet = await this.ensureWallet(order.userId);
+    await this.pushWallet(order.userId, Number(wallet.balance));
     return {
       orderId: order.id,
       refundedAmount: amount,
       walletBalance: Number(wallet.balance),
     };
+  }
+
+  private async pushWallet(userId: string, balance: number) {
+    this.ordersGateway.emitWalletUpdate({ userId, balance: Math.max(0, balance) });
   }
 
   private async ensureConfig() {

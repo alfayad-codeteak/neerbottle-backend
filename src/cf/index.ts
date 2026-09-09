@@ -172,6 +172,11 @@ export default {
       return unavailable;
     }
 
+    // Wrapping a WebSocket upgrade Response breaks the socket handshake.
+    if (request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
+      return response;
+    }
+
     return withCors(response, origin, allowedOrigins);
   },
 

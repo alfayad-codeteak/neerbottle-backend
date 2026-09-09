@@ -235,6 +235,9 @@ export class OrderAddressSnippetDto {
   @ApiProperty()
   id: string;
 
+  @ApiPropertyOptional({ nullable: true, description: 'Recipient name at drop location' })
+  name: string | null;
+
   @ApiPropertyOptional({ nullable: true })
   label: string | null;
 
@@ -252,6 +255,15 @@ export class OrderAddressSnippetDto {
 
   @ApiPropertyOptional({ nullable: true })
   pincode: string | null;
+
+  @ApiPropertyOptional({ nullable: true, description: 'Phone at drop location (may differ from account phone)' })
+  phone: string | null;
+
+  @ApiPropertyOptional({ nullable: true, description: 'Drop latitude for maps' })
+  lat: number | null;
+
+  @ApiPropertyOptional({ nullable: true, description: 'Drop longitude for maps' })
+  lng: number | null;
 }
 
 export class DeliveryPartnerSnippetDto {
@@ -506,6 +518,9 @@ export class CustomerListRowDto {
 
   @ApiProperty()
   addressCount: number;
+
+  @ApiProperty({ example: 450, description: 'Outstanding can deposit held for this customer' })
+  depositBalance: number;
 }
 
 export class PaginatedCustomersResponseDto {

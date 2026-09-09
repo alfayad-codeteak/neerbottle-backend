@@ -13,6 +13,7 @@ import { AdminCreateOrderDto } from './dto/admin-create-order.dto';
 import { STATUS_FLOW, OrderStatus } from './orders.constants';
 import { nextDeliveryStatus } from './delivery.constants';
 import { DepositsService } from '../deposits/deposits.service';
+import { DeliveryZonesService } from '../delivery-zones/delivery-zones.service';
 import { OrdersGateway } from './orders.gateway';
 import { PushService } from '../push/push.service';
 import { Prisma } from '../../generated/prisma';
@@ -34,6 +35,7 @@ export class OrdersService {
     private readonly depositsService: DepositsService,
     private readonly ordersGateway: OrdersGateway,
     private readonly pushService: PushService,
+    private readonly deliveryZones: DeliveryZonesService,
   ) {}
 
   async create(userId: string, dto: CreateOrderDto) {
@@ -84,12 +86,18 @@ export class OrdersService {
       }
 
       if (Number(depositCharge) > 0) {
+        const charge = Number(depositCharge);
+        await tx.userDepositWallet.upsert({
+          where: { userId },
+          update: { balance: { increment: charge } },
+          create: { userId, balance: charge },
+        });
         await tx.depositTransaction.create({
           data: {
             userId,
             orderId: createdOrder.id,
             type: 'CHARGE',
-            amount: Number(depositCharge),
+            amount: charge,
             note: 'Deposit charged for order',
           },
         });
@@ -167,6 +175,10 @@ export class OrdersService {
     if (!address) {
       throw new BadRequestException('Address not found or does not belong to you');
     }
+    await this.deliveryZones.assertLocationServed(
+      address.lat == null ? null : Number(address.lat),
+      address.lng == null ? null : Number(address.lng),
+    );
 
     const productIds = dto.items.map((i) => i.productId);
     const products = await this.prisma.product.findMany({
@@ -357,21 +369,28 @@ export class OrdersService {
     const partner = await this.prisma.deliveryPartner.findUnique({ where: { userId } });
     if (!partner) throw new NotFoundException('Delivery partner not found');
     const orders = await this.prisma.order.findMany({
-      where: { deliveryPartnerId: partner.id },
+      where: {
+        deliveryPartnerId: partner.id,
+        status: { not: 'CANCELLED' },
+        deliveryStatus: { notIn: ['DELIVERED', 'CANS_RETURNED'] },
+      },
       include: orderFullInclude,
       orderBy: { createdAt: 'desc' },
     });
     return orders.map((o) => this.toOrderResponse(o, true));
   }
 
-  /** Past deliveries: cans returned, or cancelled while still assigned to this partner. */
+  /** Past jobs: delivered (incl. awaiting can return), cans returned, or cancelled while assigned. */
   async findDeliveryPartnerOrderHistory(userId: string) {
     const partner = await this.prisma.deliveryPartner.findUnique({ where: { userId } });
     if (!partner) throw new NotFoundException('Delivery partner not found');
     const orders = await this.prisma.order.findMany({
       where: {
         deliveryPartnerId: partner.id,
-        OR: [{ deliveryStatus: 'CANS_RETURNED' }, { status: 'CANCELLED' }],
+        OR: [
+          { deliveryStatus: { in: ['DELIVERED', 'CANS_RETURNED'] } },
+          { status: { in: ['DELIVERED', 'CANCELLED'] } },
+        ],
       },
       include: orderFullInclude,
       orderBy: { updatedAt: 'desc' },
@@ -523,6 +542,8 @@ export class OrdersService {
     if (opts?.created) {
       this.ordersGateway.emitOrderCreated(body as Record<string, unknown>);
     }
+    const balance = await this.depositsService.getHeldDepositBalance(order.userId);
+    this.ordersGateway.emitWalletUpdate({ userId: order.userId, balance });
 
     const isOpenOffer =
       !order.deliveryPartnerId &&
@@ -678,12 +699,16 @@ export class OrdersService {
       }>;
       address: {
         id: string;
+        name?: string | null;
         label: string | null;
         line1: string;
         line2: string | null;
         city: string;
         state: string | null;
         pincode: string | null;
+        phone?: string | null;
+        lat?: { toString(): string } | number | null;
+        lng?: { toString(): string } | number | null;
       };
       user?: { id: string; phone: string; name: string | null };
       deliveryPartner?: {
@@ -727,12 +752,16 @@ export class OrdersService {
       updatedAt: order.updatedAt.toISOString(),
       address: {
         id: order.address.id,
+        name: order.address.name ?? null,
         label: order.address.label,
         line1: order.address.line1,
         line2: order.address.line2,
         city: order.address.city,
         state: order.address.state,
         pincode: order.address.pincode,
+        phone: order.address.phone ?? null,
+        lat: order.address.lat == null ? null : Number(order.address.lat),
+        lng: order.address.lng == null ? null : Number(order.address.lng),
       },
       items: order.items.map((i) => ({
         id: i.id,

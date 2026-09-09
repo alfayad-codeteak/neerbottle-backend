@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
 function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
@@ -20,7 +20,8 @@ export class DeliveryZonesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: { name: string; centerLat: number; centerLng: number; radiusKm: number; isActive?: boolean }) {
-    return this.prisma.deliveryZone.create({
+    return this.toZone(
+      await this.prisma.deliveryZone.create({
       data: {
         name: dto.name,
         centerLat: dto.centerLat,
@@ -28,22 +29,33 @@ export class DeliveryZonesService {
         radiusKm: dto.radiusKm,
         isActive: dto.isActive ?? true,
       },
-    });
+    }),
+    );
   }
 
   async findAllAdmin() {
-    return this.prisma.deliveryZone.findMany({ orderBy: { createdAt: 'desc' } });
+    const rows = await this.prisma.deliveryZone.findMany({ orderBy: { createdAt: 'desc' } });
+    return rows.map((z) => this.toZone(z));
+  }
+
+  async findAllPublic() {
+    const rows = await this.prisma.deliveryZone.findMany({
+      where: { isActive: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    return rows.map((z) => this.toZone(z));
   }
 
   async findOneAdmin(id: string) {
     const zone = await this.prisma.deliveryZone.findUnique({ where: { id } });
     if (!zone) throw new NotFoundException('Zone not found');
-    return zone;
+    return this.toZone(zone);
   }
 
   async update(id: string, dto: Partial<{ name: string; centerLat: number; centerLng: number; radiusKm: number; isActive: boolean }>) {
     await this.findOneAdmin(id);
-    return this.prisma.deliveryZone.update({
+    return this.toZone(
+      await this.prisma.deliveryZone.update({
       where: { id },
       data: {
         ...(dto.name !== undefined ? { name: dto.name } : {}),
@@ -52,7 +64,8 @@ export class DeliveryZonesService {
         ...(dto.radiusKm !== undefined ? { radiusKm: dto.radiusKm } : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
       },
-    });
+    }),
+    );
   }
 
   async remove(id: string) {
@@ -62,6 +75,9 @@ export class DeliveryZonesService {
   }
 
   async checkAvailability(lat: number, lng: number) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      throw new BadRequestException('lat and lng are required');
+    }
     const zones = await this.prisma.deliveryZone.findMany({
       where: { isActive: true },
       orderBy: { createdAt: 'desc' },
@@ -92,6 +108,51 @@ export class DeliveryZonesService {
       available,
       nearest,
       matches: results.filter((r) => r.isWithin),
+      configured: zones.length > 0,
+    };
+  }
+
+  /**
+   * When at least one active zone exists, the pin must fall inside a circle.
+   * With no zones configured, delivery is not restricted.
+   */
+  async assertLocationServed(lat: number | null | undefined, lng: number | null | undefined) {
+    const zones = await this.prisma.deliveryZone.findMany({ where: { isActive: true } });
+    if (zones.length === 0) return;
+
+    if (lat == null || lng == null || !Number.isFinite(Number(lat)) || !Number.isFinite(Number(lng))) {
+      throw new BadRequestException(
+        'Pin this address on the map. We only deliver inside marked zones.',
+      );
+    }
+
+    const check = await this.checkAvailability(Number(lat), Number(lng));
+    if (!check.available) {
+      throw new BadRequestException(
+        'This location is outside our delivery area. Move the pin into a marked zone.',
+      );
+    }
+  }
+
+  private toZone(z: {
+    id: string;
+    name: string;
+    centerLat: unknown;
+    centerLng: unknown;
+    radiusKm: unknown;
+    isActive: boolean;
+    createdAt: Date;
+    updatedAt: Date;
+  }) {
+    return {
+      id: z.id,
+      name: z.name,
+      centerLat: Number(z.centerLat),
+      centerLng: Number(z.centerLng),
+      radiusKm: Number(z.radiusKm),
+      isActive: z.isActive,
+      createdAt: z.createdAt.toISOString(),
+      updatedAt: z.updatedAt.toISOString(),
     };
   }
 }

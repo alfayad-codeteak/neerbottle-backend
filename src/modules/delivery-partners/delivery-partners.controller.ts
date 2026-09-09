@@ -86,7 +86,7 @@ export class DeliveryPartnersController {
   @ApiOperation({
     summary: 'Assigned orders',
     description:
-      'Orders where this partner is assigned. Payload matches admin order shape including customer `user` for navigation.',
+      'Active jobs assigned to this partner (`ASSIGNED` / `PICKED_UP`). Delivered, cans-returned, and cancelled jobs are on `GET /delivery-partners/my-order-history`.',
   })
   @ApiOkResponse({ type: OrderResponseDto, isArray: true })
   myOrders(@Req() req: RequestWithUser) {
@@ -133,7 +133,7 @@ export class DeliveryPartnersController {
   @ApiOperation({
     summary: 'Order history (past deliveries)',
     description:
-      'Orders assigned to this partner that are finished (`deliveryStatus: CANS_RETURNED`) or `CANCELLED`. Same payload shape as `GET /delivery-partners/my-orders`. Use `my-orders` for active assignments.',
+      'Past jobs for this partner: `deliveryStatus` is `DELIVERED` or `CANS_RETURNED`, warehouse `status` is `DELIVERED`, or `CANCELLED`. Confirm-cans still works on `DELIVERED` rows from this list. Sorted by `updatedAt` desc.',
   })
   @ApiOkResponse({ type: OrderResponseDto, isArray: true })
   myOrderHistory(@Req() req: RequestWithUser) {

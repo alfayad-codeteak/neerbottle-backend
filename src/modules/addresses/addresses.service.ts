@@ -1,11 +1,15 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { DeliveryZonesService } from '../delivery-zones/delivery-zones.service';
 import { CreateAddressDto } from './dto/create-address.dto';
 import { UpdateAddressDto } from './dto/update-address.dto';
 
 @Injectable()
 export class AddressesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly deliveryZones: DeliveryZonesService,
+  ) {}
 
   async findAll(userId: string) {
     const list = await this.prisma.address.findMany({
@@ -16,6 +20,7 @@ export class AddressesService {
   }
 
   async create(userId: string, dto: CreateAddressDto) {
+    await this.deliveryZones.assertLocationServed(dto.lat, dto.lng);
     if (dto.isDefault) {
       await this.prisma.address.updateMany({
         where: { userId },
@@ -33,6 +38,8 @@ export class AddressesService {
         state: dto.state ?? null,
         pincode: dto.pincode ?? null,
         phone: dto.phone ?? null,
+        lat: dto.lat ?? null,
+        lng: dto.lng ?? null,
         isDefault: dto.isDefault ?? false,
       },
     });
@@ -46,6 +53,9 @@ export class AddressesService {
     if (!address) {
       throw new NotFoundException('Address not found');
     }
+    const nextLat = dto.lat !== undefined ? dto.lat : address.lat != null ? Number(address.lat) : undefined;
+    const nextLng = dto.lng !== undefined ? dto.lng : address.lng != null ? Number(address.lng) : undefined;
+    await this.deliveryZones.assertLocationServed(nextLat, nextLng);
     if (dto.isDefault === true) {
       await this.prisma.address.updateMany({
         where: { userId },
@@ -64,6 +74,8 @@ export class AddressesService {
         ...(dto.pincode !== undefined && { pincode: dto.pincode || null }),
         ...(dto.phone !== undefined && { phone: dto.phone || null }),
         ...(dto.isDefault !== undefined && { isDefault: dto.isDefault }),
+        ...(dto.lat !== undefined && { lat: dto.lat }),
+        ...(dto.lng !== undefined && { lng: dto.lng }),
       },
     });
     return this.toResponse(updated);
@@ -80,6 +92,8 @@ export class AddressesService {
     state: string | null;
     pincode: string | null;
     phone: string | null;
+    lat?: unknown;
+    lng?: unknown;
     isDefault: boolean;
     createdAt: Date;
     updatedAt: Date;
@@ -94,6 +108,8 @@ export class AddressesService {
       state: a.state,
       pincode: a.pincode,
       phone: a.phone,
+      lat: a.lat == null ? null : Number(a.lat),
+      lng: a.lng == null ? null : Number(a.lng),
       isDefault: a.isDefault,
       createdAt: a.createdAt.toISOString(),
       updatedAt: a.updatedAt.toISOString(),

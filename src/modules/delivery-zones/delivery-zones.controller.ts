@@ -7,6 +7,16 @@ import { DeliveryZonesService } from './delivery-zones.service';
 export class DeliveryZonesController {
   constructor(private readonly zones: DeliveryZonesService) {}
 
+  @Get()
+  @ApiOperation({
+    summary: 'List active delivery zones',
+    description: 'Public. Shop centers and radius circles for the customer map.',
+  })
+  @ApiOkResponse({ description: 'Active zones (shop + radius).' })
+  list() {
+    return this.zones.findAllPublic();
+  }
+
   @Get('check')
   @ApiOperation({
     summary: 'Check delivery availability for a location',
@@ -22,4 +32,3 @@ export class DeliveryZonesController {
     return this.zones.checkAvailability(lat, lng);
   }
 }
-

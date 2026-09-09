@@ -145,6 +145,15 @@ export class PrismaService
       `ALTER TABLE "Banner" ALTER COLUMN "imageBytes" DROP NOT NULL`,
     );
 
+    await run(
+      'Address lat',
+      `ALTER TABLE "Address" ADD COLUMN IF NOT EXISTS "lat" DECIMAL(10,7)`,
+    );
+    await run(
+      'Address lng',
+      `ALTER TABLE "Address" ADD COLUMN IF NOT EXISTS "lng" DECIMAL(10,7)`,
+    );
+
     this.logger.log('Runtime schema check finished');
   }
 

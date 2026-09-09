@@ -97,6 +97,7 @@ export class CustomersService {
           createdAt: true,
           updatedAt: true,
           _count: { select: { orders: true, addresses: true } },
+          depositWallet: { select: { balance: true } },
         },
         orderBy: { createdAt: 'desc' },
         skip,
@@ -105,16 +106,45 @@ export class CustomersService {
       this.prisma.user.count({ where }),
     ]);
 
+    const ids = customers.map((c) => c.id);
+    const ledgers =
+      ids.length === 0
+        ? []
+        : await this.prisma.depositTransaction.groupBy({
+            by: ['userId', 'type'],
+            where: { userId: { in: ids } },
+            _sum: { amount: true },
+          });
+    const heldByUser = new Map<string, number>();
+    for (const row of ledgers) {
+      const amount = Number(row._sum.amount ?? 0);
+      const sign = ['CHARGE', 'TOP_UP', 'ADMIN_CREDIT'].includes(row.type)
+        ? 1
+        : ['REFUND', 'ADMIN_DEBIT'].includes(row.type)
+          ? -1
+          : 0;
+      heldByUser.set(row.userId, (heldByUser.get(row.userId) ?? 0) + sign * amount);
+    }
+
     return {
-      data: customers.map((c) => ({
-        id: c.id,
-        phone: c.phone,
-        name: c.name,
-        createdAt: c.createdAt,
-        updatedAt: c.updatedAt,
-        orderCount: c._count.orders,
-        addressCount: c._count.addresses,
-      })),
+      data: customers.map((c) => {
+        const fromLedger = heldByUser.get(c.id);
+        const fromWallet = Number(c.depositWallet?.balance ?? 0);
+        const depositBalance = Math.max(
+          0,
+          fromLedger !== undefined ? fromLedger : fromWallet,
+        );
+        return {
+          id: c.id,
+          phone: c.phone,
+          name: c.name,
+          createdAt: c.createdAt,
+          updatedAt: c.updatedAt,
+          orderCount: c._count.orders,
+          addressCount: c._count.addresses,
+          depositBalance,
+        };
+      }),
       total,
       page,
       limit,

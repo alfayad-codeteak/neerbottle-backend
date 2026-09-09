@@ -120,6 +120,12 @@ export class OrdersGateway implements OnGatewayConnection {
     }
   }
 
+  emitWalletUpdate(payload: { userId: string; balance: number }) {
+    if (!this.server || !payload.userId) return;
+    this.server.to(`user:${payload.userId}`).emit('wallet.updated', payload);
+    this.server.to(ADMIN_ROOM).emit('wallet.updated', payload);
+  }
+
   /** Live ping for admin portals when a customer places an order. */
   emitOrderCreated(payload: Record<string, unknown>) {
     if (!this.server) return;
