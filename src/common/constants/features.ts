@@ -7,6 +7,7 @@ export const FEATURES = [
   'dashboard',
   'reports',
   'banners',
+  'deposits',
 ] as const;
 
 export type FeatureKey = (typeof FEATURES)[number];
