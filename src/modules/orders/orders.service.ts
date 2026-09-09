@@ -366,13 +366,12 @@ export class OrdersService {
   }
 
   async findOrdersForDeliveryPartner(userId: string) {
-    const partner = await this.prisma.deliveryPartner.findUnique({ where: { userId } });
-    if (!partner) throw new NotFoundException('Delivery partner not found');
+    const partner = await this.getPartnerByAuthUserId(userId);
     const orders = await this.prisma.order.findMany({
       where: {
         deliveryPartnerId: partner.id,
         status: { not: 'CANCELLED' },
-        deliveryStatus: { notIn: ['DELIVERED', 'CANS_RETURNED'] },
+        deliveryStatus: { in: ['ASSIGNED', 'PICKED_UP'] },
       },
       include: orderFullInclude,
       orderBy: { createdAt: 'desc' },
@@ -380,22 +379,40 @@ export class OrdersService {
     return orders.map((o) => this.toOrderResponse(o, true));
   }
 
-  /** Past jobs: delivered (incl. awaiting can return), cans returned, or cancelled while assigned. */
+  /**
+   * Past jobs for this rider. Finished last-mile (`DELIVERED` / `CANS_RETURNED`),
+   * warehouse delivered, or cancelled — even if warehouse status is still RECEIVED.
+   */
   async findDeliveryPartnerOrderHistory(userId: string) {
-    const partner = await this.prisma.deliveryPartner.findUnique({ where: { userId } });
-    if (!partner) throw new NotFoundException('Delivery partner not found');
+    const partner = await this.getPartnerByAuthUserId(userId);
+    const ids = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT id
+      FROM "Order"
+      WHERE "deliveryPartnerId" = ${partner.id}
+        AND (
+          UPPER(BTRIM("deliveryStatus")) IN ('DELIVERED', 'CANS_RETURNED')
+          OR UPPER(BTRIM(status)) IN ('DELIVERED', 'CANCELLED')
+        )
+      ORDER BY "updatedAt" DESC
+    `);
+    if (ids.length === 0) return [];
     const orders = await this.prisma.order.findMany({
-      where: {
-        deliveryPartnerId: partner.id,
-        OR: [
-          { deliveryStatus: { in: ['DELIVERED', 'CANS_RETURNED'] } },
-          { status: { in: ['DELIVERED', 'CANCELLED'] } },
-        ],
-      },
+      where: { id: { in: ids.map((r) => r.id) } },
       include: orderFullInclude,
-      orderBy: { updatedAt: 'desc' },
     });
-    return orders.map((o) => this.toOrderResponse(o, true));
+    const byId = new Map(orders.map((o) => [o.id, o]));
+    return ids
+      .map((r) => byId.get(r.id))
+      .filter((o): o is NonNullable<typeof o> => o != null)
+      .map((o) => this.toOrderResponse(o, true));
+  }
+
+  private async getPartnerByAuthUserId(userId: string) {
+    const byUser = await this.prisma.deliveryPartner.findUnique({ where: { userId } });
+    if (byUser) return byUser;
+    const byRow = await this.prisma.deliveryPartner.findUnique({ where: { id: userId } });
+    if (byRow) return byRow;
+    throw new NotFoundException('Delivery partner not found');
   }
 
   async partnerUpdateDeliveryStatus(

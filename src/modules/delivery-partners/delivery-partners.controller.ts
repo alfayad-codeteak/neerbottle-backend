@@ -133,11 +133,12 @@ export class DeliveryPartnersController {
   @ApiOperation({
     summary: 'Order history (past deliveries)',
     description:
-      'Past jobs for this partner: `deliveryStatus` is `DELIVERED` or `CANS_RETURNED`, warehouse `status` is `DELIVERED`, or `CANCELLED`. Confirm-cans still works on `DELIVERED` rows from this list. Sorted by `updatedAt` desc.',
+      'JSON array of finished jobs for this rider. Includes last-mile `DELIVERED` (even if warehouse status is still RECEIVED), `CANS_RETURNED`, warehouse `DELIVERED`, and `CANCELLED`. Active `ASSIGNED` / `PICKED_UP` jobs stay on `GET /delivery-partners/my-orders`.',
   })
   @ApiOkResponse({ type: OrderResponseDto, isArray: true })
-  myOrderHistory(@Req() req: RequestWithUser) {
-    return this.ordersService.findDeliveryPartnerOrderHistory(req.user.id);
+  async myOrderHistory(@Req() req: RequestWithUser) {
+    const rows = await this.ordersService.findDeliveryPartnerOrderHistory(req.user.id);
+    return Array.isArray(rows) ? rows : [];
   }
 
   @Patch('orders/:orderId/delivery-status')

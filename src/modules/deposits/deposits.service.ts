@@ -73,17 +73,24 @@ export class DepositsService {
       where: { userId },
       _sum: { amount: true },
     });
-    if (rows.length === 0) {
-      const wallet = await this.ensureWallet(userId);
-      return Math.max(0, Number(wallet.balance));
-    }
     let net = 0;
     for (const row of rows) {
-      const amount = Number(row._sum.amount ?? 0);
+      const amount = Number(String(row._sum.amount ?? 0));
+      if (!Number.isFinite(amount)) continue;
       if (['CHARGE', 'TOP_UP', 'ADMIN_CREDIT'].includes(row.type)) net += amount;
       else if (['REFUND', 'ADMIN_DEBIT'].includes(row.type)) net -= amount;
     }
-    return Math.max(0, net);
+    if (net > 0) return net;
+
+    const orderAgg = await this.prisma.order.aggregate({
+      where: { userId, depositRefundedAt: null },
+      _sum: { depositCharge: true },
+    });
+    const fromOrders = Number(String(orderAgg._sum.depositCharge ?? 0));
+    if (Number.isFinite(fromOrders) && fromOrders > 0) return fromOrders;
+
+    const wallet = await this.ensureWallet(userId);
+    return Math.max(0, Number(wallet.balance));
   }
 
   async topUpMyWallet(userId: string, dto: TopUpDepositDto) {
