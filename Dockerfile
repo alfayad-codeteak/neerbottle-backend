@@ -5,6 +5,8 @@
 FROM node:20-alpine AS builder
 
 WORKDIR /app
+ENV CHECKPOINT_DISABLE=1
+ENV PRISMA_HIDE_UPDATE_MESSAGE=true
 
 # bcrypt needs native build when prebuilt binaries are missing (e.g. linux-arm64 + musl)
 RUN apk add --no-cache --virtual .build-deps python3 make g++
@@ -24,6 +26,8 @@ FROM node:20-alpine AS runtime
 
 WORKDIR /app
 ENV NODE_ENV=production
+ENV CHECKPOINT_DISABLE=1
+ENV PRISMA_HIDE_UPDATE_MESSAGE=true
 
 RUN apk add --no-cache --virtual .build-deps python3 make g++
 

@@ -116,7 +116,7 @@ export class OrdersService {
       include: orderFullInclude,
     });
     try {
-      await this.notifyOrderChanged(created.id, { created: true });
+      this.queueOrderNotify(created.id, { created: true });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(`Order ${created.id} saved but notify failed: ${msg}`);
@@ -361,7 +361,7 @@ export class OrdersService {
       },
       include: orderFullInclude,
     });
-    await this.notifyOrderChanged(orderId);
+    this.queueOrderNotify(orderId);
     return this.toOrderResponse(updated, true);
   }
 
@@ -446,7 +446,7 @@ export class OrdersService {
       },
       include: orderFullInclude,
     });
-    await this.notifyOrderChanged(orderId);
+    this.queueOrderNotify(orderId);
     return this.toOrderResponse(updated, true);
   }
 
@@ -480,7 +480,7 @@ export class OrdersService {
       },
       include: orderFullInclude,
     });
-    await this.notifyOrderChanged(orderId);
+    this.queueOrderNotify(orderId);
     return this.toOrderResponse(updated, true);
   }
 
@@ -534,8 +534,13 @@ export class OrdersService {
       where: { id: orderId },
       include: orderFullInclude,
     });
-    await this.notifyOrderChanged(orderId);
+    this.queueOrderNotify(orderId);
     return this.toOrderResponse(updated!, true);
+  }
+
+  /** Sockets + FCM after the HTTP response so checkout/status PATCH stay fast. */
+  private queueOrderNotify(orderId: string, opts?: { created?: boolean }) {
+    void this.notifyOrderChanged(orderId, opts);
   }
 
   async notifyOrderChanged(orderId: string, opts?: { created?: boolean }) {
@@ -562,17 +567,23 @@ export class OrdersService {
     this.ordersGateway.emitOrderUpdate(body as Record<string, unknown>);
     if (opts?.created) {
       this.ordersGateway.emitOrderCreated(body as Record<string, unknown>);
+      const balance = await this.depositsService.getHeldDepositBalance(order.userId);
+      this.ordersGateway.emitWalletUpdate({ userId: order.userId, balance });
     }
-    const balance = await this.depositsService.getHeldDepositBalance(order.userId);
-    this.ordersGateway.emitWalletUpdate({ userId: order.userId, balance });
 
     const isOpenOffer =
       !order.deliveryPartnerId &&
       (order.deliveryStatus ?? 'NONE') === 'NONE' &&
       order.status !== 'CANCELLED';
-    const selfAssignOn = await this.isPartnerSelfAssignEnabled();
-    if (opts?.created && isOpenOffer && selfAssignOn) {
-      this.ordersGateway.emitOrderOffered(body as Record<string, unknown>);
+    if (opts?.created && isOpenOffer) {
+      const selfAssignOn = await this.isPartnerSelfAssignEnabled();
+      if (selfAssignOn) {
+        this.ordersGateway.emitOrderOffered(body as Record<string, unknown>);
+        await this.pushService.notifyOrderOffered({
+          orderId: order.id,
+          status: order.status,
+        });
+      }
     }
     if (!opts?.created && order.deliveryStatus === 'ASSIGNED' && order.deliveryPartnerId) {
       this.ordersGateway.emitOrderOfferedTaken({
@@ -582,7 +593,6 @@ export class OrdersService {
       });
     }
 
-    // Socket.IO covers foreground live updates; FCM covers background/killed apps.
     await this.pushService.notifyOrderUpdated({
       customerUserId: order.userId,
       partnerUserId: order.deliveryPartner?.userId ?? undefined,
@@ -590,12 +600,6 @@ export class OrdersService {
       status: order.status,
       deliveryStatus: order.deliveryStatus ?? undefined,
     });
-    if (opts?.created && isOpenOffer && selfAssignOn) {
-      await this.pushService.notifyOrderOffered({
-        orderId: order.id,
-        status: order.status,
-      });
-    }
   }
 
   private async allocatePublicOrderNumber(tx: Prisma.TransactionClient): Promise<string> {
@@ -647,7 +651,7 @@ export class OrdersService {
         data: { status: 'CANCELLED' },
         include: orderFullInclude,
       });
-      await this.notifyOrderChanged(orderId);
+      this.queueOrderNotify(orderId);
       return this.toOrderResponse(updated, true);
     }
 
@@ -663,7 +667,7 @@ export class OrdersService {
       data: { status: newStatus },
       include: orderFullInclude,
     });
-    await this.notifyOrderChanged(orderId);
+    this.queueOrderNotify(orderId);
     return this.toOrderResponse(updated, true);
   }
 

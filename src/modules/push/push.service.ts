@@ -111,14 +111,14 @@ export class PushService {
     };
     if (args.deliveryStatus) baseData.deliveryStatus = args.deliveryStatus;
 
-    // Customer notification
-    await this.sendToUser(args.customerUserId, {
-      title: 'Order update',
-      body: `Your order status is now ${args.status}`,
-      data: { type: 'order.updated', ...baseData },
-    });
+    const jobs: Array<Promise<unknown>> = [
+      this.sendToUser(args.customerUserId, {
+        title: 'Order update',
+        body: `Your order status is now ${args.status}`,
+        data: { type: 'order.updated', ...baseData },
+      }),
+    ];
 
-    // Delivery partner notification (when assigned / delivery flow updates)
     if (args.partnerUserId && args.partnerUserId !== args.customerUserId) {
       const type =
         args.deliveryStatus === 'ASSIGNED' ? 'order.assigned' : 'order.updated';
@@ -128,12 +128,15 @@ export class PushService {
           ? 'A new order has been assigned to you.'
           : `Order status is now ${args.status}`;
 
-      await this.sendToUser(args.partnerUserId, {
-        title,
-        body,
-        data: { type, audience: 'deliveryPartner', ...baseData },
-      });
+      jobs.push(
+        this.sendToUser(args.partnerUserId, {
+          title,
+          body,
+          data: { type, audience: 'deliveryPartner', ...baseData },
+        }),
+      );
     }
+    await Promise.all(jobs);
   }
 
   /** Ping every online partner that a new job is waiting to be accepted. */
