@@ -11,7 +11,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { AdminCreateOrderDto } from './dto/admin-create-order.dto';
 import { STATUS_FLOW, OrderStatus } from './orders.constants';
-import { nextDeliveryStatus } from './delivery.constants';
+import { nextDeliveryStatus, warehouseStatusForDeliveryStep } from './delivery.constants';
 import { DepositsService } from '../deposits/deposits.service';
 import { DeliveryZonesService } from '../delivery-zones/delivery-zones.service';
 import { OrdersGateway } from './orders.gateway';
@@ -436,10 +436,12 @@ export class OrdersService {
         `Invalid delivery status transition from ${order.deliveryStatus} to ${nextStatus}`,
       );
     }
+    const warehouseStatus = warehouseStatusForDeliveryStep(order.status, nextStatus);
     const updated = await this.prisma.order.update({
       where: { id: orderId },
       data: {
         deliveryStatus: nextStatus,
+        ...(warehouseStatus ? { status: warehouseStatus } : {}),
         ...(deliveryNotes !== undefined ? { deliveryNotes } : {}),
       },
       include: orderFullInclude,
@@ -468,10 +470,12 @@ export class OrdersService {
         `Can receive confirmation is allowed only after delivery. Current delivery status: ${order.deliveryStatus}`,
       );
     }
+    const warehouseStatus = warehouseStatusForDeliveryStep(order.status, 'CANS_RETURNED');
     const updated = await this.prisma.order.update({
       where: { id: orderId },
       data: {
         deliveryStatus: 'CANS_RETURNED',
+        ...(warehouseStatus ? { status: warehouseStatus } : {}),
         ...(deliveryNotes !== undefined ? { deliveryNotes } : {}),
       },
       include: orderFullInclude,

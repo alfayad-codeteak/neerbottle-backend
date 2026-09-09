@@ -150,6 +150,7 @@ export class DeliveryPartnersController {
     description: [
       'Single-step transitions only: ASSIGNED→PICKED_UP→DELIVERED→CANS_RETURNED.',
       'Request body `deliveryStatus` must be the **next** state (PICKED_UP, DELIVERED, or CANS_RETURNED).',
+      '`PICKED_UP` sets warehouse `status` to `DISPATCHED` if it was still earlier. `DELIVERED` / `CANS_RETURNED` set warehouse `status` to `DELIVERED`.',
       'Optional `deliveryNotes` stored on the order.',
     ].join('\n'),
   })
