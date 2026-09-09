@@ -17,7 +17,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService, type OtpPurpose } from '../../redis/redis.service';
 import { Msg91Service } from '../../msg91/msg91.service';
 import { secretFromConfig } from '../../config/secret-from-env';
-import { parseExpiresToSeconds, refreshExpiryToDate } from '../../config/parse-jwt-expires';
+import { parseExpiresToSeconds, refreshExpiryToDate, jwtAccessExpiresSpec, jwtRefreshExpiresSpec } from '../../config/parse-jwt-expires';
 import { Prisma } from '../../generated/prisma';
 import { RegisterDto } from './dto/register.dto';
 import { RegisterOwnerDto } from './dto/register-owner.dto';
@@ -434,8 +434,8 @@ export class AuthService {
   ): Promise<Omit<AuthResponseDto, 'user'>> {
     const accessSecret = secretFromConfig(this.config, 'JWT_ACCESS_SECRET', 'access-secret-change-me');
     const refreshSecret = secretFromConfig(this.config, 'JWT_REFRESH_SECRET', 'refresh-secret-change-me');
-    const accessExpires = this.config.get<string>('JWT_ACCESS_EXPIRES') ?? '15m';
-    const refreshExpires = this.config.get<string>('JWT_REFRESH_EXPIRES') ?? '7d';
+    const accessExpires = jwtAccessExpiresSpec(this.config.get<string>('JWT_ACCESS_EXPIRES'));
+    const refreshExpires = jwtRefreshExpiresSpec(this.config.get<string>('JWT_REFRESH_EXPIRES'));
 
     const accessExpiresSec = parseExpiresToSeconds(accessExpires);
     const refreshExpiresSec = parseExpiresToSeconds(refreshExpires);

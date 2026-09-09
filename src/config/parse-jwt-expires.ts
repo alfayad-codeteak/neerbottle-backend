@@ -1,9 +1,9 @@
-/** Parses env-style expiry: `15m`, `7d`, `24h`. Unknown format → 900 seconds. */
+/** Parses env-style expiry: `15m`, `5h`, `90d`. Unknown format → 5 hours. */
 export function parseExpiresToSeconds(expires: string): number {
-  const match = expires.trim().match(/^(\d+)([dhm])$/);
-  if (!match) return 900;
+  const match = expires.trim().match(/^(\d+)([dhm])$/i);
+  if (!match) return 5 * 60 * 60;
   const num = parseInt(match[1], 10);
-  const unit = match[2];
+  const unit = match[2].toLowerCase();
   const multipliers: Record<string, number> = {
     d: 24 * 60 * 60,
     h: 60 * 60,
@@ -13,14 +13,15 @@ export function parseExpiresToSeconds(expires: string): number {
 }
 
 export function refreshExpiryToDate(expires: string): Date {
-  const match = expires.trim().match(/^(\d+)([dhm])$/);
-  if (!match) return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-  const num = parseInt(match[1], 10);
-  const unit = match[2];
-  const multipliers: Record<string, number> = {
-    d: 24 * 60 * 60 * 1000,
-    h: 60 * 60 * 1000,
-    m: 60 * 1000,
-  };
-  return new Date(Date.now() + num * (multipliers[unit] ?? 86400000));
+  return new Date(Date.now() + parseExpiresToSeconds(expires) * 1000);
+}
+
+export function jwtAccessExpiresSpec(raw?: string | null): string {
+  const v = raw?.trim();
+  return v || '5h';
+}
+
+export function jwtRefreshExpiresSpec(raw?: string | null): string {
+  const v = raw?.trim();
+  return v || '90d';
 }
