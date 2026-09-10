@@ -62,16 +62,26 @@ export class CustomersService {
       return customer;
     }
 
-    const address = await this.addressesService.create(user.id, {
-      ...dto.address,
-      isDefault: dto.address.isDefault ?? true,
-    });
-    return { ...customer, addressCount: 1, addresses: [address] };
+    try {
+      const address = await this.addressesService.create(
+        user.id,
+        {
+          ...dto.address,
+          name: dto.address.name ?? dto.name ?? undefined,
+          isDefault: dto.address.isDefault ?? true,
+        },
+        { requireMapPin: false },
+      );
+      return { ...customer, addressCount: 1, addresses: [address] };
+    } catch (err) {
+      await this.prisma.user.delete({ where: { id: user.id } }).catch(() => undefined);
+      throw err;
+    }
   }
 
   async createAddressAdmin(customerId: string, dto: CreateAddressDto) {
     await this.ensureCustomer(customerId);
-    return this.addressesService.create(customerId, dto);
+    return this.addressesService.create(customerId, dto, { requireMapPin: false });
   }
 
   async findAllAdmin(filters: { phone?: string; name?: string; page?: number; limit?: number }) {

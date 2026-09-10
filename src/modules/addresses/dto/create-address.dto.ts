@@ -33,10 +33,10 @@ export class CreateAddressDto {
   @IsString()
   line2?: string;
 
-  @ApiProperty({ example: 'Mumbai' })
+  @ApiPropertyOptional({ example: 'Mumbai' })
+  @IsOptional()
   @IsString()
-  @MinLength(1)
-  city: string;
+  city?: string;
 
   @ApiPropertyOptional({ example: 'Maharashtra' })
   @IsOptional()

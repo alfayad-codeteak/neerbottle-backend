@@ -797,7 +797,18 @@ export class OrdersService {
       })),
     };
     if (includeUser && order.user) {
-      return { ...base, user: order.user };
+      const userName =
+        (typeof order.user.name === 'string' && order.user.name.trim()) ||
+        (typeof order.address?.name === 'string' && order.address.name.trim()) ||
+        null;
+      return {
+        ...base,
+        user: {
+          id: order.user.id,
+          phone: order.user.phone,
+          name: userName,
+        },
+      };
     }
     return base;
   }

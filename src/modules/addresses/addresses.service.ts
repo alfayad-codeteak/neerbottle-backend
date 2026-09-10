@@ -19,8 +19,20 @@ export class AddressesService {
     return list.map((a) => this.toResponse(a));
   }
 
-  async create(userId: string, dto: CreateAddressDto) {
-    await this.deliveryZones.assertLocationServed(dto.lat, dto.lng);
+  async create(
+    userId: string,
+    dto: CreateAddressDto,
+    options?: { requireMapPin?: boolean },
+  ) {
+    const hasPin =
+      dto.lat != null &&
+      dto.lng != null &&
+      Number.isFinite(Number(dto.lat)) &&
+      Number.isFinite(Number(dto.lng));
+    // Admin create-order types an address with no map pin. Customer app still must pin.
+    if (options?.requireMapPin !== false || hasPin) {
+      await this.deliveryZones.assertLocationServed(dto.lat, dto.lng);
+    }
     if (dto.isDefault) {
       await this.prisma.address.updateMany({
         where: { userId },
@@ -34,7 +46,7 @@ export class AddressesService {
         label: dto.label ?? null,
         line1: dto.line1,
         line2: dto.line2 ?? null,
-        city: dto.city,
+        city: dto.city?.trim() || '',
         state: dto.state ?? null,
         pincode: dto.pincode ?? null,
         phone: dto.phone ?? null,
