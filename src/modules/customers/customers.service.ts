@@ -6,6 +6,7 @@ import { CreateAddressDto } from '../addresses/dto/create-address.dto';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 
 const SALT_ROUNDS = 8;
+const SHOPPER_ROLES = ['customer', 'admin', 'owner'] as const;
 
 @Injectable()
 export class CustomersService {
@@ -14,9 +15,9 @@ export class CustomersService {
     private readonly addressesService: AddressesService,
   ) {}
 
-  private async ensureCustomer(id: string) {
+  private async ensureShopper(id: string) {
     const user = await this.prisma.user.findFirst({
-      where: { id, role: 'customer' },
+      where: { id, role: { in: [...SHOPPER_ROLES] } },
       select: { id: true },
     });
     if (!user) {
@@ -25,30 +26,15 @@ export class CustomersService {
     return user;
   }
 
-  async createAdmin(dto: CreateCustomerDto) {
-    const existing = await this.prisma.user.findUnique({ where: { phone: dto.phone } });
-    if (existing) {
-      throw new ConflictException('Phone already registered');
-    }
-    const passwordHash = dto.password ? await bcrypt.hash(dto.password, SALT_ROUNDS) : null;
-    const user = await this.prisma.user.create({
-      data: {
-        phone: dto.phone,
-        name: dto.name ?? null,
-        passwordHash,
-        role: 'customer',
-      },
-      select: {
-        id: true,
-        phone: true,
-        name: true,
-        createdAt: true,
-        updatedAt: true,
-        _count: { select: { orders: true, addresses: true } },
-      },
-    });
-
-    const customer = {
+  private toCustomerRow(user: {
+    id: string;
+    phone: string;
+    name: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+    _count: { orders: number; addresses: number };
+  }) {
+    return {
       id: user.id,
       phone: user.phone,
       name: user.name,
@@ -57,11 +43,78 @@ export class CustomersService {
       orderCount: user._count.orders,
       addressCount: user._count.addresses,
     };
+  }
+
+  async createAdmin(dto: CreateCustomerDto) {
+    const existing = await this.prisma.user.findUnique({
+      where: { phone: dto.phone },
+      select: {
+        id: true,
+        phone: true,
+        name: true,
+        role: true,
+        createdAt: true,
+        updatedAt: true,
+        _count: { select: { orders: true, addresses: true } },
+      },
+    });
+
+    if (existing && !SHOPPER_ROLES.includes(existing.role as (typeof SHOPPER_ROLES)[number])) {
+      throw new ConflictException('Phone already registered');
+    }
+
+    let user = existing
+      ? {
+          id: existing.id,
+          phone: existing.phone,
+          name: existing.name,
+          createdAt: existing.createdAt,
+          updatedAt: existing.updatedAt,
+          _count: existing._count,
+        }
+      : null;
+
+    if (!user) {
+      const passwordHash = dto.password ? await bcrypt.hash(dto.password, SALT_ROUNDS) : null;
+      user = await this.prisma.user.create({
+        data: {
+          phone: dto.phone,
+          name: dto.name ?? null,
+          passwordHash,
+          role: 'customer',
+        },
+        select: {
+          id: true,
+          phone: true,
+          name: true,
+          createdAt: true,
+          updatedAt: true,
+          _count: { select: { orders: true, addresses: true } },
+        },
+      });
+    } else if (dto.name?.trim() && !user.name?.trim()) {
+      const updated = await this.prisma.user.update({
+        where: { id: user.id },
+        data: { name: dto.name.trim() },
+        select: {
+          id: true,
+          phone: true,
+          name: true,
+          createdAt: true,
+          updatedAt: true,
+          _count: { select: { orders: true, addresses: true } },
+        },
+      });
+      user = updated;
+    }
+
+    const customer = this.toCustomerRow(user);
 
     if (!dto.address) {
       return customer;
     }
 
+    const createdFresh = !existing;
     try {
       const address = await this.addressesService.create(
         user.id,
@@ -72,20 +125,24 @@ export class CustomersService {
         },
         { requireMapPin: false },
       );
-      return { ...customer, addressCount: 1, addresses: [address] };
+      return { ...customer, addressCount: customer.addressCount + 1, addresses: [address] };
     } catch (err) {
-      await this.prisma.user.delete({ where: { id: user.id } }).catch(() => undefined);
+      if (createdFresh) {
+        await this.prisma.user.delete({ where: { id: user.id } }).catch(() => undefined);
+      }
       throw err;
     }
   }
 
   async createAddressAdmin(customerId: string, dto: CreateAddressDto) {
-    await this.ensureCustomer(customerId);
+    await this.ensureShopper(customerId);
     return this.addressesService.create(customerId, dto, { requireMapPin: false });
   }
 
   async findAllAdmin(filters: { phone?: string; name?: string; page?: number; limit?: number }) {
-    const where: Record<string, unknown> = { role: 'customer' };
+    const where: Record<string, unknown> = filters.phone?.trim()
+      ? { role: { in: [...SHOPPER_ROLES] } }
+      : { role: 'customer' };
     if (filters.phone) {
       where.phone = { contains: filters.phone };
     }
@@ -163,7 +220,7 @@ export class CustomersService {
 
   async findOneAdmin(id: string) {
     const user = await this.prisma.user.findFirst({
-      where: { id, role: 'customer' },
+      where: { id, role: { in: [...SHOPPER_ROLES] } },
       select: {
         id: true,
         phone: true,

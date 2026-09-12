@@ -134,7 +134,7 @@ export class OrdersService {
 
   private async assertCustomerExists(userId: string) {
     const customer = await this.prisma.user.findFirst({
-      where: { id: userId, role: 'customer' },
+      where: { id: userId, role: { in: ['customer', 'admin', 'owner'] } },
     });
     if (!customer) {
       throw new NotFoundException('Customer not found');
