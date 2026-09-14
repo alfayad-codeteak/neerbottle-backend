@@ -118,7 +118,6 @@ export class FcmService {
       return { successCount: 0, failureCount: 0, invalidTokens: [] };
     }
 
-    const channelId = this.config.get<string>('FCM_ANDROID_CHANNEL_ID')?.trim() || 'orders';
     const platform = args.platform ?? 'web';
 
     const res = await this.messaging.sendEachForMulticast({
@@ -130,8 +129,8 @@ export class FcmService {
           ? {
               priority: 'high',
               notification: {
-                channelId,
-                sound: 'default',
+                channelId: 'order_alerts',
+                sound: 'beep_warning',
               },
             }
           : undefined,
@@ -143,7 +142,11 @@ export class FcmService {
               },
               payload: {
                 aps: {
-                  sound: 'default',
+                  sound: 'beep_warning.mp3',
+                  alert: {
+                    title: args.title,
+                    body: args.body,
+                  },
                 },
               },
             }

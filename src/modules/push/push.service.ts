@@ -130,8 +130,11 @@ export class PushService {
 
       jobs.push(
         this.sendToUser(args.partnerUserId, {
-          title,
-          body,
+          title: args.deliveryStatus === 'ASSIGNED' ? 'New order' : title,
+          body:
+            args.deliveryStatus === 'ASSIGNED'
+              ? 'You have an order to pick up'
+              : body,
           data: { type, audience: 'deliveryPartner', ...baseData },
         }),
       );
@@ -145,17 +148,16 @@ export class PushService {
       where: { isAvailable: true },
       select: { userId: true },
     });
-    const baseData = {
-      orderId: args.orderId,
-      status: args.status,
-      deliveryStatus: 'NONE',
-    };
     await Promise.all(
       partners.map((p) =>
         this.sendToUser(p.userId, {
-          title: 'New order available',
-          body: 'A new delivery is waiting. Accept it to take the job.',
-          data: { type: 'order.offered', audience: 'deliveryPartner', ...baseData },
+          title: 'New order',
+          body: 'You have an order to pick up',
+          data: {
+            type: 'order.offered',
+            orderId: args.orderId,
+            audience: 'deliveryPartner',
+          },
         }),
       ),
     );
