@@ -110,7 +110,8 @@ export class CustomersService {
 
     const customer = this.toCustomerRow(user);
 
-    if (!dto.address) {
+    const line1 = dto.address?.line1?.trim();
+    if (!line1) {
       return customer;
     }
 

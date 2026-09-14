@@ -7,6 +7,7 @@ import {
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateAdminDto } from './dto/create-admin.dto';
+import { CreateOwnerDto } from './dto/create-owner.dto';
 import { UpdateAdminDto } from './dto/update-admin.dto';
 import { FEATURES, isValidFeature } from '../../common/constants/features';
 
@@ -42,9 +43,26 @@ export class OwnerService {
     return this.toAdminResponse(user);
   }
 
+  async createOwner(dto: CreateOwnerDto) {
+    const existing = await this.prisma.user.findUnique({ where: { phone: dto.phone } });
+    if (existing) {
+      throw new ConflictException('User already registered with this phone');
+    }
+    const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
+    const user = await this.prisma.user.create({
+      data: {
+        phone: dto.phone,
+        name: dto.name,
+        passwordHash,
+        role: 'owner',
+      },
+    });
+    return this.toAdminResponse(user);
+  }
+
   async findAllAdmins() {
     const users = await this.prisma.user.findMany({
-      where: { role: 'admin' },
+      where: { role: { in: ['admin', 'owner'] } },
       orderBy: { createdAt: 'desc' },
       select: {
         id: true,
@@ -60,10 +78,13 @@ export class OwnerService {
 
   async updateAdmin(id: string, dto: UpdateAdminDto) {
     const user = await this.prisma.user.findFirst({
-      where: { id, role: 'admin' },
+      where: { id, role: { in: ['admin', 'owner'] } },
     });
     if (!user) {
-      throw new NotFoundException('Admin not found');
+      throw new NotFoundException('Staff not found');
+    }
+    if (user.role === 'owner' && dto.permissions != null) {
+      throw new BadRequestException('Owner accounts have full access; permissions are not assigned');
     }
     const data: { name?: string; passwordHash?: string; permissions?: string[] } = {};
     if (dto.name != null) data.name = dto.name;
@@ -87,13 +108,22 @@ export class OwnerService {
     return this.toAdminResponse(updated);
   }
 
-  async removeAdmin(id: string) {
+  async removeAdmin(id: string, actorId: string) {
     const user = await this.prisma.user.findFirst({
-      where: { id, role: 'admin' },
-      select: { id: true },
+      where: { id, role: { in: ['admin', 'owner'] } },
+      select: { id: true, role: true },
     });
     if (!user) {
-      throw new NotFoundException('Admin not found');
+      throw new NotFoundException('Staff not found');
+    }
+    if (user.id === actorId) {
+      throw new BadRequestException('You cannot delete your own account');
+    }
+    if (user.role === 'owner') {
+      const owners = await this.prisma.user.count({ where: { role: 'owner' } });
+      if (owners <= 1) {
+        throw new BadRequestException('Cannot delete the last owner');
+      }
     }
     await this.prisma.user.delete({ where: { id } });
     return { success: true, id };
