@@ -110,8 +110,9 @@ export class CustomersService {
 
     const customer = this.toCustomerRow(user);
 
-    const line1 = dto.address?.line1?.trim();
-    if (!line1) {
+    const addressInput = dto.address;
+    const line1 = addressInput?.line1?.trim();
+    if (!addressInput || !line1) {
       return customer;
     }
 
@@ -120,9 +121,10 @@ export class CustomersService {
       const address = await this.addressesService.create(
         user.id,
         {
-          ...dto.address,
-          name: dto.address.name ?? dto.name ?? undefined,
-          isDefault: dto.address.isDefault ?? true,
+          ...addressInput,
+          line1,
+          name: addressInput.name ?? dto.name ?? undefined,
+          isDefault: addressInput.isDefault ?? true,
         },
         { requireMapPin: false },
       );
