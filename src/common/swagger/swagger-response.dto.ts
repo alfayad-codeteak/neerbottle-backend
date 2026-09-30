@@ -302,6 +302,42 @@ const ORDER_STATUS_ENUM = [
 
 const DELIVERY_STATUS_ENUM = ['NONE', 'ASSIGNED', 'PICKED_UP', 'DELIVERED', 'CANS_RETURNED'] as const;
 
+export class CanReturnSettlementDto {
+  @ApiProperty({ description: 'Empty cans promised at checkout' })
+  promisedReturnedCanCount: number;
+
+  @ApiProperty({ description: 'Empty cans collected at the door' })
+  actualReturnedCanCount: number;
+
+  @ApiProperty({ description: 'Promised minus actual, if customer returned fewer empties' })
+  extraCansNotReturned: number;
+
+  @ApiProperty({ description: 'Deposit charged at checkout (before this confirm)' })
+  previousDepositCharge: number;
+
+  @ApiProperty({ description: 'Deposit after actual return count' })
+  newDepositCharge: number;
+
+  @ApiProperty({ description: 'COD / order total before this confirm' })
+  previousTotalAmount: number;
+
+  @ApiProperty({ description: 'Order total after this confirm' })
+  newTotalAmount: number;
+
+  @ApiProperty({
+    description:
+      'Cash to collect from the customer now (extra deposit). 0 if no extra.',
+    example: 150,
+  })
+  amountToCollectFromCustomer: number;
+
+  @ApiProperty({
+    description:
+      'Cash to return to the customer if they handed more empties than promised. 0 if none.',
+  })
+  amountToRefundToCustomer: number;
+}
+
 export class OrderResponseDto {
   @ApiProperty()
   id: string;
@@ -350,6 +386,13 @@ export class OrderResponseDto {
     description: 'Empty cans actually collected at delivery (null until partner confirms)',
   })
   actualReturnedCanCount: number | null;
+
+  @ApiPropertyOptional({
+    type: () => CanReturnSettlementDto,
+    description:
+      'Present on confirm-cans-received: cash to collect or return after actual empty-can count',
+  })
+  canReturnSettlement?: CanReturnSettlementDto;
 
   @ApiProperty()
   totalAmount: number;
@@ -700,6 +743,7 @@ export const SWAGGER_EXTRA_MODELS = [
   OrderAddressSnippetDto,
   DeliveryPartnerSnippetDto,
   UserSnippetDto,
+  CanReturnSettlementDto,
   OrderResponseDto,
   OrderQuoteResponseDto,
   PublicOrderStatusDto,

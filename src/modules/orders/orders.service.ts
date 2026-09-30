@@ -574,7 +574,22 @@ export class OrdersService {
     });
 
     this.queueOrderNotify(orderId);
-    return this.toOrderResponse(updated, true);
+    const amountToCollectFromCustomer = delta.gt(0) ? Number(delta) : 0;
+    const amountToRefundToCustomer = delta.lt(0) ? Number(delta.abs()) : 0;
+    return {
+      ...this.toOrderResponse(updated, true),
+      canReturnSettlement: {
+        promisedReturnedCanCount: promisedReturned,
+        actualReturnedCanCount: actualReturned,
+        extraCansNotReturned: extraCans,
+        previousDepositCharge: Number(previousCharge),
+        newDepositCharge: Number(depositCharge),
+        previousTotalAmount: Number(order.totalAmount),
+        newTotalAmount: Number(finalTotalAmount),
+        amountToCollectFromCustomer,
+        amountToRefundToCustomer,
+      },
+    };
   }
 
   /** Unassigned jobs that an online partner may accept (first accept wins). */
@@ -658,10 +673,10 @@ export class OrdersService {
       deliveryPartnerUserId: order.deliveryPartner?.userId ?? undefined,
     };
     this.ordersGateway.emitOrderUpdate(body as Record<string, unknown>);
+    const balance = await this.depositsService.getHeldDepositBalance(order.userId);
+    this.ordersGateway.emitWalletUpdate({ userId: order.userId, balance });
     if (opts?.created) {
       this.ordersGateway.emitOrderCreated(body as Record<string, unknown>);
-      const balance = await this.depositsService.getHeldDepositBalance(order.userId);
-      this.ordersGateway.emitWalletUpdate({ userId: order.userId, balance });
     }
 
     const isOpenOffer =
