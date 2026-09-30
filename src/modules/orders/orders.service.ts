@@ -211,20 +211,8 @@ export class OrdersService {
     const returnedCanCount = Math.max(0, Math.min(requestedReturned, totalQty));
     const returnedForDeposit = Math.max(0, Math.min(returnedCanCount, depositEligibleQty));
     const chargeableCanCount = Math.max(0, depositEligibleQty - returnedForDeposit);
-
-    const depositEnabled = depositConfig.enabled;
-    const depositBase = depositEnabled
-      ? new Decimal(depositConfig.perCanAmount).mul(chargeableCanCount)
-      : new Decimal(0);
-    const discountPercent = depositEnabled
-      ? this.depositsService.resolveDiscountPercentForQty(chargeableCanCount, depositConfig)
-      : 0;
-    const depositDiscount = depositEnabled
-      ? depositBase.mul(new Decimal(discountPercent).div(100))
-      : new Decimal(0);
-    const depositCharge = depositEnabled
-      ? Decimal.max(new Decimal(0), depositBase.sub(depositDiscount))
-      : new Decimal(0);
+    const { depositEnabled, depositBase, depositDiscount, depositCharge } =
+      this.recomputeDepositForReturnedCans(chargeableCanCount, depositConfig);
     const finalTotalAmount = itemsSubtotal.add(handlingTotal).add(depositCharge);
     return {
       address,
@@ -236,7 +224,9 @@ export class OrdersService {
       totalQty,
       returnedCanCount,
       chargeableCanCount,
-      discountPercent,
+      discountPercent: depositEnabled
+        ? this.depositsService.resolveDiscountPercentForQty(chargeableCanCount, depositConfig)
+        : 0,
       depositBase,
       depositDiscount,
       depositCharge,
@@ -448,11 +438,15 @@ export class OrdersService {
   async partnerConfirmCansReceived(
     partnerUserId: string,
     orderId: string,
-    deliveryNotes?: string,
+    dto: { actualReturnedCanCount?: number; deliveryNotes?: string } = {},
   ) {
-    const [partner, order] = await Promise.all([
+    const [partner, order, depositConfig] = await Promise.all([
       this.prisma.deliveryPartner.findUnique({ where: { userId: partnerUserId } }),
-      this.prisma.order.findUnique({ where: { id: orderId } }),
+      this.prisma.order.findUnique({
+        where: { id: orderId },
+        include: { items: { include: { product: true } } },
+      }),
+      this.depositsService.getRuntimeConfig(),
     ]);
     if (!partner) throw new NotFoundException('Delivery partner not found');
     if (!order) throw new NotFoundException('Order not found');
@@ -467,16 +461,118 @@ export class OrdersService {
         `Can receive confirmation is allowed only after delivery. Current delivery status: ${order.deliveryStatus}`,
       );
     }
+    if (order.actualReturnedCanCount != null) {
+      throw new ConflictException('Actual empty-can count was already recorded for this order');
+    }
+
+    const depositEligibleQty = order.items.reduce((sum, item) => {
+      if (item.product.hasDeposit === false) return sum;
+      return sum + item.quantity;
+    }, 0);
+    const promisedReturned = Math.max(0, order.returnedCanCount ?? 0);
+    let actualReturned = dto.actualReturnedCanCount;
+    if (actualReturned == null) {
+      actualReturned = promisedReturned;
+    }
+    if (!Number.isInteger(actualReturned) || actualReturned < 0) {
+      throw new BadRequestException('actualReturnedCanCount must be a whole number of 0 or more');
+    }
+    if (actualReturned > depositEligibleQty) {
+      throw new BadRequestException(
+        `actualReturnedCanCount cannot exceed ${depositEligibleQty} deposit cans on this order`,
+      );
+    }
+
+    const returnedForDeposit = Math.max(0, Math.min(actualReturned, depositEligibleQty));
+    const chargeableCanCount = Math.max(0, depositEligibleQty - returnedForDeposit);
+    const { depositBase, depositDiscount, depositCharge } = this.recomputeDepositForReturnedCans(
+      chargeableCanCount,
+      depositConfig,
+    );
+    const itemsSubtotal = order.items.reduce(
+      (sum, item) => sum.add(new Decimal(item.unitPrice).mul(item.quantity)),
+      new Decimal(0),
+    );
+    const handlingTotal = new Decimal(order.handlingTotal ?? 0);
+    const finalTotalAmount = itemsSubtotal.add(handlingTotal).add(depositCharge);
+    const previousCharge = new Decimal(order.depositCharge ?? 0);
+    const delta = depositCharge.sub(previousCharge);
+    const extraCans = Math.max(0, promisedReturned - actualReturned);
+
+    let logLine = `Doorstep: customer returned ${actualReturned} of ${promisedReturned} empty cans`;
+    if (delta.gt(0)) {
+      logLine += `; extra ${extraCans} can deposit ₹${delta.toFixed(2)}`;
+    } else if (delta.lt(0)) {
+      logLine += `; deposit reduced ₹${delta.abs().toFixed(2)}`;
+    }
+    const riderNote = dto.deliveryNotes?.trim();
+    const existingNotes = order.deliveryNotes?.trim();
+    const deliveryNotes = [existingNotes, riderNote, logLine].filter(Boolean).join('\n');
+
     const warehouseStatus = warehouseStatusForDeliveryStep(order.status, 'CANS_RETURNED');
-    const updated = await this.prisma.order.update({
-      where: { id: orderId },
-      data: {
-        deliveryStatus: 'CANS_RETURNED',
-        ...(warehouseStatus ? { status: warehouseStatus } : {}),
-        ...(deliveryNotes !== undefined ? { deliveryNotes } : {}),
-      },
-      include: orderFullInclude,
+    const remainingCharge = Number(depositCharge);
+    const markFullyRefunded =
+      remainingCharge <= 0 && previousCharge.gt(0) && delta.lt(0);
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      if (delta.gt(0)) {
+        const charge = Number(delta);
+        await tx.userDepositWallet.upsert({
+          where: { userId: order.userId },
+          update: { balance: { increment: charge } },
+          create: { userId: order.userId, balance: charge },
+        });
+        await tx.depositTransaction.create({
+          data: {
+            userId: order.userId,
+            orderId: order.id,
+            type: 'CHARGE',
+            amount: charge,
+            note: logLine,
+            createdById: partnerUserId,
+          },
+        });
+      } else if (delta.lt(0)) {
+        const refund = Number(delta.abs());
+        const wallet = await tx.userDepositWallet.upsert({
+          where: { userId: order.userId },
+          update: {},
+          create: { userId: order.userId, balance: 0 },
+        });
+        const nextBalance = Math.max(0, Number(wallet.balance) - refund);
+        await tx.userDepositWallet.update({
+          where: { userId: order.userId },
+          data: { balance: nextBalance },
+        });
+        await tx.depositTransaction.create({
+          data: {
+            userId: order.userId,
+            orderId: order.id,
+            type: 'REFUND',
+            amount: refund,
+            note: logLine,
+            createdById: partnerUserId,
+          },
+        });
+      }
+
+      return tx.order.update({
+        where: { id: orderId },
+        data: {
+          deliveryStatus: 'CANS_RETURNED',
+          actualReturnedCanCount: actualReturned,
+          depositBase,
+          depositDiscount,
+          depositCharge,
+          totalAmount: finalTotalAmount,
+          deliveryNotes,
+          ...(warehouseStatus ? { status: warehouseStatus } : {}),
+          ...(markFullyRefunded ? { depositRefundedAt: new Date() } : {}),
+        },
+        include: orderFullInclude,
+      });
     });
+
     this.queueOrderNotify(orderId);
     return this.toOrderResponse(updated, true);
   }
@@ -684,6 +780,33 @@ export class OrdersService {
     );
   }
 
+  private recomputeDepositForReturnedCans(
+    chargeableCanCount: number,
+    depositConfig: {
+      enabled: boolean;
+      perCanAmount: number;
+      promoActive: boolean;
+      promoStartsAt: Date | null;
+      promoEndsAt: Date | null;
+      tiers: Array<{ minQty: number; discountPercent: number }>;
+    },
+  ) {
+    const depositEnabled = depositConfig.enabled;
+    const depositBase = depositEnabled
+      ? new Decimal(depositConfig.perCanAmount).mul(chargeableCanCount)
+      : new Decimal(0);
+    const discountPercent = depositEnabled
+      ? this.depositsService.resolveDiscountPercentForQty(chargeableCanCount, depositConfig)
+      : 0;
+    const depositDiscount = depositEnabled
+      ? depositBase.mul(new Decimal(discountPercent).div(100))
+      : new Decimal(0);
+    const depositCharge = depositEnabled
+      ? Decimal.max(new Decimal(0), depositBase.sub(depositDiscount))
+      : new Decimal(0);
+    return { depositEnabled, depositBase, depositDiscount, depositCharge };
+  }
+
   private statusLabel(s: string): string {
     const labels: Record<string, string> = {
       RECEIVED: 'Received',
@@ -711,6 +834,7 @@ export class OrdersService {
       status: string;
       ifCanRefund?: boolean;
       returnedCanCount?: number;
+      actualReturnedCanCount?: number | null;
       totalAmount: Decimal;
       createdAt: Date;
       updatedAt: Date;
@@ -766,6 +890,7 @@ export class OrdersService {
       status: order.status,
       ifCanRefund: order.ifCanRefund ?? false,
       returnedCanCount: order.returnedCanCount ?? 0,
+      actualReturnedCanCount: order.actualReturnedCanCount ?? null,
       totalAmount: Number(order.totalAmount),
       handlingTotal: Number((order as { handlingTotal?: Decimal }).handlingTotal ?? 0),
       depositBase: Number((order as { depositBase?: Decimal }).depositBase ?? 0),

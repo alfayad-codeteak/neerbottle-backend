@@ -178,7 +178,7 @@ export class DeliveryPartnersController {
   @ApiOperation({
     summary: 'Confirm cans received from customer',
     description:
-      'Dedicated confirmation endpoint for partner app. Allowed only when current `deliveryStatus` is `DELIVERED`; sets `deliveryStatus` to `CANS_RETURNED`.',
+      'Dedicated confirmation endpoint for partner app. Allowed only when current `deliveryStatus` is `DELIVERED`; sets `deliveryStatus` to `CANS_RETURNED`. Send `actualReturnedCanCount` when the customer handed back fewer (or more) empties than promised at checkout — extra cans are charged as deposit.',
   })
   @ApiParam({ name: 'orderId', description: 'Order UUID' })
   @ApiOkResponse({ description: 'Updated order snapshot with `deliveryStatus: CANS_RETURNED`.', type: OrderResponseDto })
@@ -189,6 +189,6 @@ export class DeliveryPartnersController {
     @Param('orderId') orderId: string,
     @Body() dto: ConfirmCansReceivedDto,
   ) {
-    return this.ordersService.partnerConfirmCansReceived(req.user.id, orderId, dto.deliveryNotes);
+    return this.ordersService.partnerConfirmCansReceived(req.user.id, orderId, dto);
   }
 }

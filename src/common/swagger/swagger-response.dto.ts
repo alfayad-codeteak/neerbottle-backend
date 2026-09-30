@@ -342,8 +342,14 @@ export class OrderResponseDto {
   @ApiProperty({ description: 'Whether this order has can-return flow enabled' })
   ifCanRefund: boolean;
 
-  @ApiProperty({ description: 'Number of cans customer returned for this order' })
+  @ApiProperty({ description: 'Empty cans customer promised to return at checkout' })
   returnedCanCount: number;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Empty cans actually collected at delivery (null until partner confirms)',
+  })
+  actualReturnedCanCount: number | null;
 
   @ApiProperty()
   totalAmount: number;

@@ -172,6 +172,7 @@ model Order {
   status        String        @default("RECEIVED")
   ifCanRefund   Boolean       @default(false)
   returnedCanCount Int        @default(0)
+  actualReturnedCanCount Int?
   totalAmount   Decimal       @db.Decimal(12, 2)
   handlingTotal Decimal       @default(0) @db.Decimal(12, 2)
   depositBase   Decimal       @default(0) @db.Decimal(12, 2)
