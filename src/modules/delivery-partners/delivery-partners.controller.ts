@@ -86,7 +86,7 @@ export class DeliveryPartnersController {
   @ApiOperation({
     summary: 'Assigned orders',
     description:
-      'Active jobs assigned to this partner (`ASSIGNED` / `PICKED_UP`). Delivered, cans-returned, and cancelled jobs are on `GET /delivery-partners/my-order-history`.',
+      'Active jobs assigned to this partner (`ASSIGNED` / `PICKED_UP`), including future-dated bookings with `isUpcoming: true`. Use `scheduledDate` (not `createdAt`) for the delivery day. Delivered, cans-returned, and cancelled jobs are on `GET /delivery-partners/my-order-history`.',
   })
   @ApiOkResponse({ type: OrderResponseDto, isArray: true })
   myOrders(@Req() req: RequestWithUser) {
@@ -99,7 +99,7 @@ export class DeliveryPartnersController {
   @ApiOperation({
     summary: 'Open orders available to accept',
     description:
-      'Unassigned orders (`deliveryStatus: NONE`). Partner must be online (`isAvailable`) to accept. First `POST .../accept` wins.',
+      'Unassigned orders due today or earlier (`deliveryStatus: NONE`). Future scheduled orders stay off this list until their `scheduledDate`. Partner must be online (`isAvailable`) to accept. First `POST .../accept` wins.',
   })
   @ApiOkResponse({ type: OrderResponseDto, isArray: true })
   availableOrders() {

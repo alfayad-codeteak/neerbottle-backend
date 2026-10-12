@@ -20,9 +20,9 @@ export class CreateOrderDto {
   addressId: string;
 
   @ApiPropertyOptional({
-    example: '07:00-09:00',
+    example: '2026-10-15 10:00-11:00',
     description:
-      'Optional delivery window. When omitted or empty, the earliest default slot (07:00-09:00) is used.',
+      'Delivery window. Prefer `YYYY-MM-DD HH:mm-HH:mm` for future booking. Slot-only `HH:mm-HH:mm` is treated as today.',
   })
   @IsOptional()
   @IsString()

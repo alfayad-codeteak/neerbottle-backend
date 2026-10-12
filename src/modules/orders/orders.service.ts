@@ -18,6 +18,11 @@ import { OrdersGateway } from './orders.gateway';
 import { PushService } from '../push/push.service';
 import { Prisma } from '../../generated/prisma';
 import { formatPublicOrderNumber, publicOrderDatePrefix } from './order-number';
+import {
+  isUpcomingScheduledDate,
+  normalizeOrderTimeSlot,
+  scheduledDateFromTimeSlot,
+} from './order-schedule';
 
 const orderFullInclude = {
   items: { include: { product: true } },
@@ -39,7 +44,7 @@ export class OrdersService {
   ) {}
 
   async create(userId: string, dto: CreateOrderDto, includeUser = false) {
-    const timeSlot = (dto.timeSlot ?? '').trim() || '07:00-09:00';
+    const timeSlot = normalizeOrderTimeSlot(dto.timeSlot);
     const quote = await this.buildQuote(userId, dto);
     const orderItems = quote.orderItems;
     const depositBase = quote.depositBase;
@@ -359,7 +364,12 @@ export class OrdersService {
       include: orderFullInclude,
       orderBy: { createdAt: 'desc' },
     });
-    return orders.map((o) => this.toOrderResponse(o, true));
+    return orders
+      .map((o) => this.toOrderResponse(o, true))
+      .sort((a, b) => {
+        if (a.isUpcoming !== b.isUpcoming) return a.isUpcoming ? 1 : -1;
+        return a.scheduledDate.localeCompare(b.scheduledDate);
+      });
   }
 
   /**
@@ -606,12 +616,25 @@ export class OrdersService {
       include: orderFullInclude,
       orderBy: { createdAt: 'desc' },
     });
-    return orders.map((o) => this.toOrderResponse(o, true));
+    return orders
+      .map((o) => this.toOrderResponse(o, true))
+      .filter((o) => !o.isUpcoming);
   }
 
   async acceptOrderByPartner(partnerUserId: string, orderId: string) {
     if (!(await this.isPartnerSelfAssignEnabled())) {
       throw new BadRequestException('Partner self-assign is turned off. Wait for admin to assign the order.');
+    }
+    const existingForSchedule = await this.prisma.order.findUnique({ where: { id: orderId } });
+    if (
+      existingForSchedule &&
+      isUpcomingScheduledDate(
+        scheduledDateFromTimeSlot(existingForSchedule.timeSlot, existingForSchedule.createdAt),
+      )
+    ) {
+      throw new BadRequestException(
+        'This order is scheduled for a future day. It becomes available on the delivery date.',
+      );
     }
     const partner = await this.prisma.deliveryPartner.findUnique({ where: { userId: partnerUserId } });
     if (!partner) throw new NotFoundException('Delivery partner not found');
@@ -679,10 +702,12 @@ export class OrdersService {
       this.ordersGateway.emitOrderCreated(body as Record<string, unknown>);
     }
 
+    const scheduledDate = scheduledDateFromTimeSlot(order.timeSlot, order.createdAt);
     const isOpenOffer =
       !order.deliveryPartnerId &&
       (order.deliveryStatus ?? 'NONE') === 'NONE' &&
-      order.status !== 'CANCELLED';
+      order.status !== 'CANCELLED' &&
+      !isUpcomingScheduledDate(scheduledDate);
     if (opts?.created && isOpenOffer) {
       const selfAssignOn = await this.isPartnerSelfAssignEnabled();
       if (selfAssignOn) {
@@ -901,6 +926,10 @@ export class OrdersService {
           }
         : null,
       timeSlot: order.timeSlot,
+      scheduledDate: scheduledDateFromTimeSlot(order.timeSlot, order.createdAt),
+      isUpcoming: isUpcomingScheduledDate(
+        scheduledDateFromTimeSlot(order.timeSlot, order.createdAt),
+      ),
       paymentMethod: order.paymentMethod,
       status: order.status,
       ifCanRefund: order.ifCanRefund ?? false,

@@ -369,6 +369,18 @@ export class OrderResponseDto {
   @ApiProperty()
   timeSlot: string;
 
+  @ApiProperty({
+    description: 'Delivery calendar date `YYYY-MM-DD` (India). Parsed from `timeSlot` when present.',
+    example: '2026-10-15',
+  })
+  scheduledDate: string;
+
+  @ApiProperty({
+    description:
+      'True when `scheduledDate` is after today. Tag as Upcoming; partner delivers on that day.',
+  })
+  isUpcoming: boolean;
+
   @ApiProperty()
   paymentMethod: string;
 
