@@ -5,6 +5,15 @@ import { getMessaging, type Messaging } from 'firebase-admin/messaging';
 
 type PushPlatform = 'android' | 'ios' | 'web';
 
+/** Partner app heads-up channel. Do not use `order_alerts` — that old channel is silent. */
+const PARTNER_ANDROID_CHANNEL_ID = 'order_alerts_v2';
+const CUSTOMER_ANDROID_CHANNEL_ID = 'order_alerts';
+
+export type AndroidPushOptions = {
+  channelId?: string;
+  sound?: string;
+};
+
 type ParsedServiceAccount = {
   projectId?: string;
   clientEmail?: string;
@@ -103,6 +112,7 @@ export class FcmService {
     body: string;
     data?: Record<string, string>;
     platform?: PushPlatform;
+    android?: AndroidPushOptions;
   }): Promise<{ successCount: number; failureCount: number; invalidTokens: string[] }> {
     if (args.tokens.length === 0) {
       return { successCount: 0, failureCount: 0, invalidTokens: [] };
@@ -119,6 +129,11 @@ export class FcmService {
     }
 
     const platform = args.platform ?? 'web';
+    const isPartner = args.data?.audience === 'deliveryPartner';
+    const androidChannelId =
+      args.android?.channelId ??
+      (isPartner ? PARTNER_ANDROID_CHANNEL_ID : CUSTOMER_ANDROID_CHANNEL_ID);
+    const androidSound = args.android?.sound ?? (isPartner ? 'default' : 'beep_warning');
 
     const res = await this.messaging.sendEachForMulticast({
       tokens: args.tokens,
@@ -129,8 +144,8 @@ export class FcmService {
           ? {
               priority: 'high',
               notification: {
-                channelId: 'order_alerts',
-                sound: 'beep_warning',
+                channelId: androidChannelId,
+                sound: androidSound,
               },
             }
           : undefined,
