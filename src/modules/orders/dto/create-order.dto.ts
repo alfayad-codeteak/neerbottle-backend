@@ -22,7 +22,7 @@ export class CreateOrderDto {
   @ApiPropertyOptional({
     example: '2026-10-15 10:00-11:00',
     description:
-      'Delivery window. Prefer `YYYY-MM-DD HH:mm-HH:mm` for future booking. Slot-only `HH:mm-HH:mm` is treated as today.',
+      'Delivery window. Prefer `YYYY-MM-DD HH:mm-HH:mm` (India). Slot-only `HH:mm-HH:mm` is today in Asia/Kolkata. If that window has already started, the API rolls to the next bookable slot (after 9pm this is next-day 10:00-11:00).',
   })
   @IsOptional()
   @IsString()
