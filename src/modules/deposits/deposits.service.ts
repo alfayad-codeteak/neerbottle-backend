@@ -270,21 +270,33 @@ export class DepositsService {
       .sort((a, b) => b.depositBalance - a.depositBalance || a.name.localeCompare(b.name));
   }
 
-  async adminAddToWallet(adminUserId: string, userId: string, dto: AdminAdjustDepositDto) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user || !['customer', 'admin', 'owner'].includes(user.role)) {
+  private async requireWalletAccount(userId: string) {
+    const id = userId?.trim();
+    if (!id) {
       throw new NotFoundException('Customer not found');
     }
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!user) {
+      throw new NotFoundException('Customer not found');
+    }
+    return user.id;
+  }
+
+  async adminAddToWallet(adminUserId: string, userId: string, dto: AdminAdjustDepositDto) {
+    const accountId = await this.requireWalletAccount(userId);
 
     const [wallet] = await this.prisma.$transaction([
       this.prisma.userDepositWallet.upsert({
-        where: { userId },
+        where: { userId: accountId },
         update: { balance: { increment: dto.amount } },
-        create: { userId, balance: dto.amount },
+        create: { userId: accountId, balance: dto.amount },
       }),
       this.prisma.depositTransaction.create({
         data: {
-          userId,
+          userId: accountId,
           type: 'ADMIN_CREDIT',
           amount: dto.amount,
           note: dto.note ?? 'Added by admin/owner',
@@ -292,7 +304,7 @@ export class DepositsService {
         },
       }),
     ]);
-    await this.pushWallet(userId, Number(wallet.balance), {
+    await this.pushWallet(accountId, Number(wallet.balance), {
       type: 'ADMIN_CREDIT',
       amount: dto.amount,
     });
@@ -301,12 +313,9 @@ export class DepositsService {
 
   /** Cash back at the counter: reduce held can-deposit. */
   async adminReturnFromWallet(adminUserId: string, userId: string, dto: AdminAdjustDepositDto) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user || !['customer', 'admin', 'owner'].includes(user.role)) {
-      throw new NotFoundException('Customer not found');
-    }
+    const accountId = await this.requireWalletAccount(userId);
 
-    const held = await this.getHeldDepositBalance(userId);
+    const held = await this.getHeldDepositBalance(accountId);
     if (held <= 0) {
       throw new BadRequestException('Customer has no deposit to return');
     }
@@ -318,18 +327,18 @@ export class DepositsService {
 
     const created = await this.prisma.$transaction(async (tx) => {
       const wallet = await tx.userDepositWallet.upsert({
-        where: { userId },
+        where: { userId: accountId },
         update: {},
-        create: { userId, balance: 0 },
+        create: { userId: accountId, balance: 0 },
       });
       const nextBalance = Math.max(0, Number(wallet.balance) - dto.amount);
       await tx.userDepositWallet.update({
-        where: { userId },
+        where: { userId: accountId },
         data: { balance: nextBalance },
       });
       return tx.depositTransaction.create({
         data: {
-          userId,
+          userId: accountId,
           type: 'ADMIN_DEBIT',
           amount: dto.amount,
           note: dto.note ?? 'Deposit returned by admin',
@@ -338,12 +347,12 @@ export class DepositsService {
       });
     });
 
-    const balance = await this.getHeldDepositBalance(userId);
+    const balance = await this.getHeldDepositBalance(accountId);
     await this.prisma.userDepositWallet.update({
-      where: { userId },
+      where: { userId: accountId },
       data: { balance },
     });
-    await this.pushWallet(userId, balance, {
+    await this.pushWallet(accountId, balance, {
       type: 'ADMIN_DEBIT',
       amount: dto.amount,
       note: created.note ?? undefined,

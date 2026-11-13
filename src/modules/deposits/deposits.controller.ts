@@ -137,7 +137,7 @@ export class DepositsController {
   @ApiOperation({
     summary: 'Admin credit customer wallet',
     description:
-      'Target `userId` must be a **customer**. Creates ADMIN_CREDIT transaction with acting admin id for audit.',
+      'Credits held can-deposit for the given `userId`. Creates ADMIN_CREDIT with acting admin id for audit.',
   })
   @ApiParam({ name: 'userId', description: 'Customer user UUID' })
   @ApiOkResponse({ description: 'Customer balance after credit.', type: WalletBalanceResponseDto })
@@ -152,7 +152,7 @@ export class DepositsController {
   @ApiOperation({
     summary: 'Admin return deposit to customer',
     description:
-      'Pays back held can-deposit (cash at counter). Target `userId` must be a **customer**. Amount cannot exceed outstanding held deposit. Writes ADMIN_DEBIT for audit.',
+      'Pays back held can-deposit (cash at counter). Amount cannot exceed outstanding held deposit. Writes ADMIN_DEBIT for audit.',
   })
   @ApiParam({ name: 'userId', description: 'Customer user UUID' })
   @ApiOkResponse({ description: 'Customer held deposit after return.', type: WalletBalanceResponseDto })
