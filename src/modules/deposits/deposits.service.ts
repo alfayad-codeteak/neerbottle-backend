@@ -76,7 +76,7 @@ export class DepositsService {
     const held = new Map<string, number>();
     if (userIds.length === 0) return held;
 
-    const [txRows, orphanOrders, wallets] = await Promise.all([
+    const [txRows, orphanOrders, unmatchedCharges, wallets] = await Promise.all([
       this.prisma.depositTransaction.groupBy({
         by: ['userId', 'type'],
         where: { userId: { in: userIds } },
@@ -90,6 +90,11 @@ export class DepositsService {
           depositTransactions: { none: { type: 'CHARGE' } },
         },
         select: { userId: true, depositCharge: true },
+      }),
+      this.prisma.depositTransaction.groupBy({
+        by: ['userId'],
+        where: { userId: { in: userIds }, type: 'CHARGE', orderId: null },
+        _sum: { amount: true },
       }),
       this.prisma.userDepositWallet.findMany({
         where: { userId: { in: userIds } },
@@ -118,13 +123,23 @@ export class DepositsService {
       orphanByUser.set(order.userId, (orphanByUser.get(order.userId) ?? 0) + amount);
     }
 
+    const unmatchedChargeByUser = new Map<string, number>();
+    for (const row of unmatchedCharges) {
+      const amount = Number(String(row._sum.amount ?? 0));
+      if (!Number.isFinite(amount) || amount <= 0) continue;
+      unmatchedChargeByUser.set(row.userId, amount);
+    }
+
     const walletByUser = new Map(
       wallets.map((row) => [row.userId, Math.max(0, Number(row.balance))]),
     );
 
     for (const userId of userIds) {
       const net = netByUser.get(userId) ?? 0;
-      const orphans = orphanByUser.get(userId) ?? 0;
+      const orphans = Math.max(
+        0,
+        (orphanByUser.get(userId) ?? 0) - (unmatchedChargeByUser.get(userId) ?? 0),
+      );
       if (hasTx.has(userId) || orphans > 0) {
         held.set(userId, Math.max(0, net + orphans));
       } else {
