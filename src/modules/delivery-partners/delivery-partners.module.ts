@@ -4,6 +4,7 @@ import { DeliveryPartnersService } from './delivery-partners.service';
 import { DeliveryPartnersController } from './delivery-partners.controller';
 import { AdminDeliveryPartnersController } from './admin-delivery-partners.controller';
 import { AdminDeliverySettingsController } from './admin-delivery-settings.controller';
+import { AdminDeliveryReportsController } from './admin-delivery-reports.controller';
 
 @Module({
   imports: [OrdersModule],
@@ -11,6 +12,7 @@ import { AdminDeliverySettingsController } from './admin-delivery-settings.contr
     DeliveryPartnersController,
     AdminDeliveryPartnersController,
     AdminDeliverySettingsController,
+    AdminDeliveryReportsController,
   ],
   providers: [DeliveryPartnersService],
   exports: [DeliveryPartnersService],
