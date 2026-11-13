@@ -119,6 +119,18 @@ export class DepositsController {
     return this.depositsService.listAdminTransactions({ userId });
   }
 
+  @Get('admin/deposits/wallets')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Admin deposit wallets',
+    description:
+      'Customers plus any staff/test accounts that hold deposit or have deposit transactions. Highest held balance first.',
+  })
+  listAdminWallets() {
+    return this.depositsService.listAdminWallets();
+  }
+
   @Post('admin/deposits/wallet/:userId/add')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @ApiBearerAuth()

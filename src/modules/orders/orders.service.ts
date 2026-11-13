@@ -431,6 +431,9 @@ export class OrdersService {
         `Invalid delivery status transition from ${order.deliveryStatus} to ${nextStatus}`,
       );
     }
+    if (nextStatus === 'CANS_RETURNED') {
+      return this.partnerConfirmCansReceived(partnerUserId, orderId, { deliveryNotes });
+    }
     const warehouseStatus = warehouseStatusForDeliveryStep(order.status, nextStatus);
     const updated = await this.prisma.order.update({
       where: { id: orderId },

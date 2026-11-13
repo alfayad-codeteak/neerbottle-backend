@@ -66,39 +66,72 @@ export class DepositsService {
     return this.toWalletResponse(balance);
   }
 
-  /** Outstanding deposit: charges/credits minus refunds. */
+  /** Outstanding deposit: ledger plus order charges that never got a CHARGE row. */
   async getHeldDepositBalance(userId: string): Promise<number> {
-    const rows = await this.prisma.depositTransaction.groupBy({
-      by: ['type'],
-      where: { userId },
-      _sum: { amount: true },
-    });
-    let net = 0;
-    let hasCredit = false;
-    for (const row of rows) {
+    const map = await this.getHeldDepositBalances([userId]);
+    return map.get(userId) ?? 0;
+  }
+
+  async getHeldDepositBalances(userIds: string[]): Promise<Map<string, number>> {
+    const held = new Map<string, number>();
+    if (userIds.length === 0) return held;
+
+    const [txRows, orphanOrders, wallets] = await Promise.all([
+      this.prisma.depositTransaction.groupBy({
+        by: ['userId', 'type'],
+        where: { userId: { in: userIds } },
+        _sum: { amount: true },
+      }),
+      this.prisma.order.findMany({
+        where: {
+          userId: { in: userIds },
+          depositRefundedAt: null,
+          depositCharge: { gt: 0 },
+          depositTransactions: { none: { type: 'CHARGE' } },
+        },
+        select: { userId: true, depositCharge: true },
+      }),
+      this.prisma.userDepositWallet.findMany({
+        where: { userId: { in: userIds } },
+        select: { userId: true, balance: true },
+      }),
+    ]);
+
+    const netByUser = new Map<string, number>();
+    const hasTx = new Set<string>();
+    for (const row of txRows) {
+      hasTx.add(row.userId);
       const amount = Number(String(row._sum.amount ?? 0));
       if (!Number.isFinite(amount)) continue;
-      if (['CHARGE', 'TOP_UP', 'ADMIN_CREDIT'].includes(row.type)) {
-        hasCredit = true;
-        net += amount;
-      } else if (['REFUND', 'ADMIN_DEBIT'].includes(row.type)) {
-        net -= amount;
+      const sign = ['CHARGE', 'TOP_UP', 'ADMIN_CREDIT'].includes(row.type)
+        ? 1
+        : ['REFUND', 'ADMIN_DEBIT'].includes(row.type)
+          ? -1
+          : 0;
+      netByUser.set(row.userId, (netByUser.get(row.userId) ?? 0) + sign * amount);
+    }
+
+    const orphanByUser = new Map<string, number>();
+    for (const order of orphanOrders) {
+      const amount = Number(String(order.depositCharge ?? 0));
+      if (!Number.isFinite(amount) || amount <= 0) continue;
+      orphanByUser.set(order.userId, (orphanByUser.get(order.userId) ?? 0) + amount);
+    }
+
+    const walletByUser = new Map(
+      wallets.map((row) => [row.userId, Math.max(0, Number(row.balance))]),
+    );
+
+    for (const userId of userIds) {
+      const net = netByUser.get(userId) ?? 0;
+      const orphans = orphanByUser.get(userId) ?? 0;
+      if (hasTx.has(userId) || orphans > 0) {
+        held.set(userId, Math.max(0, net + orphans));
+      } else {
+        held.set(userId, walletByUser.get(userId) ?? 0);
       }
     }
-    if (hasCredit) return Math.max(0, net);
-
-    const orderAgg = await this.prisma.order.aggregate({
-      where: { userId, depositRefundedAt: null },
-      _sum: { depositCharge: true },
-    });
-    const fromOrders = Number(String(orderAgg._sum.depositCharge ?? 0));
-    const orderHeld = Number.isFinite(fromOrders) ? fromOrders : 0;
-    if (rows.length > 0 || orderHeld > 0) {
-      return Math.max(0, orderHeld + net);
-    }
-
-    const wallet = await this.ensureWallet(userId);
-    return Math.max(0, Number(wallet.balance));
+    return held;
   }
 
   async topUpMyWallet(userId: string, dto: TopUpDepositDto) {
@@ -194,9 +227,52 @@ export class DepositsService {
     });
   }
 
+  async listAdminWallets() {
+    const users = await this.prisma.user.findMany({
+      where: {
+        role: { in: ['customer', 'admin', 'owner'] },
+        OR: [
+          { role: 'customer' },
+          { depositTransactions: { some: {} } },
+          { depositWallet: { is: { balance: { gt: 0 } } } },
+          { orders: { some: { depositCharge: { gt: 0 } } } },
+        ],
+      },
+      select: {
+        id: true,
+        phone: true,
+        name: true,
+        createdAt: true,
+        updatedAt: true,
+        _count: { select: { orders: true, addresses: true } },
+        addresses: {
+          select: { name: true },
+          orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }],
+          take: 3,
+        },
+      },
+    });
+    const heldByUser = await this.getHeldDepositBalances(users.map((u) => u.id));
+    return users
+      .map((u) => {
+        const addressName = u.addresses.map((a) => a.name?.trim()).find(Boolean) ?? '';
+        return {
+          id: u.id,
+          phone: u.phone,
+          name: u.name?.trim() || addressName || '',
+          createdAt: u.createdAt.toISOString(),
+          updatedAt: u.updatedAt.toISOString(),
+          orderCount: u._count.orders,
+          addressCount: u._count.addresses,
+          depositBalance: heldByUser.get(u.id) ?? 0,
+        };
+      })
+      .sort((a, b) => b.depositBalance - a.depositBalance || a.name.localeCompare(b.name));
+  }
+
   async adminAddToWallet(adminUserId: string, userId: string, dto: AdminAdjustDepositDto) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user || user.role !== 'customer') {
+    if (!user || !['customer', 'admin', 'owner'].includes(user.role)) {
       throw new NotFoundException('Customer not found');
     }
 
@@ -226,7 +302,7 @@ export class DepositsService {
   /** Cash back at the counter: reduce held can-deposit. */
   async adminReturnFromWallet(adminUserId: string, userId: string, dto: AdminAdjustDepositDto) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user || user.role !== 'customer') {
+    if (!user || !['customer', 'admin', 'owner'].includes(user.role)) {
       throw new NotFoundException('Customer not found');
     }
 
