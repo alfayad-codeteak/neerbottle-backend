@@ -143,6 +143,40 @@ export class WalletBalanceResponseDto {
   balance: number;
 }
 
+export class DepositTransactionResponseDto {
+  @ApiProperty()
+  id: string;
+
+  @ApiProperty({
+    example: 'ADMIN_DEBIT',
+    description: 'CHARGE | TOP_UP | ADMIN_CREDIT | REFUND | ADMIN_DEBIT',
+  })
+  type: string;
+
+  @ApiProperty({ example: 150 })
+  amount: number;
+
+  @ApiPropertyOptional({ nullable: true })
+  note: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  orderId: string | null;
+
+  @ApiProperty()
+  createdAt: string;
+}
+
+export class AdminDepositTransactionResponseDto extends DepositTransactionResponseDto {
+  @ApiProperty()
+  userId: string;
+
+  @ApiProperty({ example: 'Fayad' })
+  customerName: string;
+
+  @ApiProperty({ example: '9876543210' })
+  phone: string;
+}
+
 export class DepositRefundResponseDto {
   @ApiProperty()
   orderId: string;

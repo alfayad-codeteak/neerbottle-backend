@@ -74,20 +74,28 @@ export class DepositsService {
       _sum: { amount: true },
     });
     let net = 0;
+    let hasCredit = false;
     for (const row of rows) {
       const amount = Number(String(row._sum.amount ?? 0));
       if (!Number.isFinite(amount)) continue;
-      if (['CHARGE', 'TOP_UP', 'ADMIN_CREDIT'].includes(row.type)) net += amount;
-      else if (['REFUND', 'ADMIN_DEBIT'].includes(row.type)) net -= amount;
+      if (['CHARGE', 'TOP_UP', 'ADMIN_CREDIT'].includes(row.type)) {
+        hasCredit = true;
+        net += amount;
+      } else if (['REFUND', 'ADMIN_DEBIT'].includes(row.type)) {
+        net -= amount;
+      }
     }
-    if (net > 0) return net;
+    if (hasCredit) return Math.max(0, net);
 
     const orderAgg = await this.prisma.order.aggregate({
       where: { userId, depositRefundedAt: null },
       _sum: { depositCharge: true },
     });
     const fromOrders = Number(String(orderAgg._sum.depositCharge ?? 0));
-    if (Number.isFinite(fromOrders) && fromOrders > 0) return fromOrders;
+    const orderHeld = Number.isFinite(fromOrders) ? fromOrders : 0;
+    if (rows.length > 0 || orderHeld > 0) {
+      return Math.max(0, orderHeld + net);
+    }
 
     const wallet = await this.ensureWallet(userId);
     return Math.max(0, Number(wallet.balance));
@@ -109,8 +117,81 @@ export class DepositsService {
         },
       }),
     ]);
-    await this.pushWallet(userId, Number(wallet.balance));
+    await this.pushWallet(userId, Number(wallet.balance), {
+      type: 'TOP_UP',
+      amount: dto.amount,
+    });
     return this.toWalletResponse(wallet.balance);
+  }
+
+  async listMyTransactions(userId: string) {
+    const rows = await this.prisma.depositTransaction.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      select: {
+        id: true,
+        type: true,
+        amount: true,
+        note: true,
+        orderId: true,
+        createdAt: true,
+      },
+    });
+    return rows.map((row) => ({
+      id: row.id,
+      type: row.type,
+      amount: Number(row.amount),
+      note: row.note,
+      orderId: row.orderId,
+      createdAt: row.createdAt.toISOString(),
+    }));
+  }
+
+  async listAdminTransactions(opts?: { userId?: string; take?: number }) {
+    const take = Math.min(Math.max(opts?.take ?? 200, 1), 500);
+    const userId = opts?.userId?.trim();
+    const rows = await this.prisma.depositTransaction.findMany({
+      where: userId ? { userId } : undefined,
+      orderBy: { createdAt: 'desc' },
+      take,
+      select: {
+        id: true,
+        type: true,
+        amount: true,
+        note: true,
+        orderId: true,
+        createdAt: true,
+        userId: true,
+        user: {
+          select: {
+            name: true,
+            phone: true,
+            addresses: {
+              select: { name: true },
+              orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }],
+              take: 3,
+            },
+          },
+        },
+      },
+    });
+    return rows.map((row) => {
+      const profileName = row.user.name?.trim() ?? '';
+      const addressName =
+        row.user.addresses.map((a) => a.name?.trim()).find(Boolean) ?? '';
+      return {
+        id: row.id,
+        userId: row.userId,
+        customerName: profileName || addressName || '',
+        phone: row.user.phone,
+        type: row.type,
+        amount: Number(row.amount),
+        note: row.note,
+        orderId: row.orderId,
+        createdAt: row.createdAt.toISOString(),
+      };
+    });
   }
 
   async adminAddToWallet(adminUserId: string, userId: string, dto: AdminAdjustDepositDto) {
@@ -135,8 +216,64 @@ export class DepositsService {
         },
       }),
     ]);
-    await this.pushWallet(userId, Number(wallet.balance));
+    await this.pushWallet(userId, Number(wallet.balance), {
+      type: 'ADMIN_CREDIT',
+      amount: dto.amount,
+    });
     return this.toWalletResponse(wallet.balance);
+  }
+
+  /** Cash back at the counter: reduce held can-deposit. */
+  async adminReturnFromWallet(adminUserId: string, userId: string, dto: AdminAdjustDepositDto) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || user.role !== 'customer') {
+      throw new NotFoundException('Customer not found');
+    }
+
+    const held = await this.getHeldDepositBalance(userId);
+    if (held <= 0) {
+      throw new BadRequestException('Customer has no deposit to return');
+    }
+    if (dto.amount > held) {
+      throw new BadRequestException(
+        `Cannot return more than the held deposit of ₹${held.toLocaleString('en-IN')}`,
+      );
+    }
+
+    const created = await this.prisma.$transaction(async (tx) => {
+      const wallet = await tx.userDepositWallet.upsert({
+        where: { userId },
+        update: {},
+        create: { userId, balance: 0 },
+      });
+      const nextBalance = Math.max(0, Number(wallet.balance) - dto.amount);
+      await tx.userDepositWallet.update({
+        where: { userId },
+        data: { balance: nextBalance },
+      });
+      return tx.depositTransaction.create({
+        data: {
+          userId,
+          type: 'ADMIN_DEBIT',
+          amount: dto.amount,
+          note: dto.note ?? 'Deposit returned by admin',
+          createdById: adminUserId,
+        },
+      });
+    });
+
+    const balance = await this.getHeldDepositBalance(userId);
+    await this.prisma.userDepositWallet.update({
+      where: { userId },
+      data: { balance },
+    });
+    await this.pushWallet(userId, balance, {
+      type: 'ADMIN_DEBIT',
+      amount: dto.amount,
+      note: created.note ?? undefined,
+      transactionId: created.id,
+    });
+    return this.toWalletResponse(balance);
   }
 
   async getRuntimeConfig() {
@@ -205,7 +342,7 @@ export class DepositsService {
       throw new BadRequestException('No deposit charged for this order');
     }
 
-    await this.prisma.$transaction(async (tx) => {
+    const created = await this.prisma.$transaction(async (tx) => {
       const wallet = await tx.userDepositWallet.upsert({
         where: { userId: order.userId },
         update: {},
@@ -220,7 +357,7 @@ export class DepositsService {
         where: { id: orderId },
         data: { depositRefundedAt: new Date() },
       });
-      await tx.depositTransaction.create({
+      return tx.depositTransaction.create({
         data: {
           userId: order.userId,
           orderId: order.id,
@@ -232,17 +369,34 @@ export class DepositsService {
       });
     });
 
-    const wallet = await this.ensureWallet(order.userId);
-    await this.pushWallet(order.userId, Number(wallet.balance));
+    const balance = await this.getHeldDepositBalance(order.userId);
+    await this.prisma.userDepositWallet.update({
+      where: { userId: order.userId },
+      data: { balance },
+    });
+    await this.pushWallet(order.userId, balance, {
+      type: 'REFUND',
+      amount,
+      note: created.note ?? undefined,
+      transactionId: created.id,
+    });
     return {
       orderId: order.id,
       refundedAmount: amount,
-      walletBalance: Number(wallet.balance),
+      walletBalance: balance,
     };
   }
 
-  private async pushWallet(userId: string, balance: number) {
-    this.ordersGateway.emitWalletUpdate({ userId, balance: Math.max(0, balance) });
+  private async pushWallet(
+    userId: string,
+    balance: number,
+    extra?: { type?: string; amount?: number; note?: string; transactionId?: string },
+  ) {
+    this.ordersGateway.emitWalletUpdate({
+      userId,
+      balance: Math.max(0, balance),
+      ...extra,
+    });
   }
 
   private async ensureConfig() {

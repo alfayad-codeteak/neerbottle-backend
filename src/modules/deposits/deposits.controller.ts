@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
   ApiResponse,
   ApiTags,
   ApiParam,
+  ApiQuery,
   ApiOkResponse,
 } from '@nestjs/swagger';
 import { Request } from 'express';
@@ -19,6 +20,8 @@ import {
   DepositPublicConfigResponseDto,
   DepositConfigAdminResponseDto,
   WalletBalanceResponseDto,
+  DepositTransactionResponseDto,
+  AdminDepositTransactionResponseDto,
 } from '../../common/swagger/swagger-response.dto';
 
 interface RequestWithUser extends Request {
@@ -79,6 +82,18 @@ export class DepositsController {
     return this.depositsService.getMyWallet(req.user.id);
   }
 
+  @Get('deposits/wallet/me/transactions')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'My deposit transaction history',
+    description: 'Newest first. Includes charges, admin credits, and deposit returns.',
+  })
+  @ApiOkResponse({ type: [DepositTransactionResponseDto] })
+  listMyTransactions(@Req() req: RequestWithUser) {
+    return this.depositsService.listMyTransactions(req.user.id);
+  }
+
   @Post('deposits/wallet/me/top-up')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -89,6 +104,19 @@ export class DepositsController {
   @ApiOkResponse({ description: 'New balance after credit.', type: WalletBalanceResponseDto })
   topUp(@Req() req: RequestWithUser, @Body() dto: TopUpDepositDto) {
     return this.depositsService.topUpMyWallet(req.user.id, dto);
+  }
+
+  @Get('admin/deposits/transactions')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Admin deposit transaction history',
+    description: 'Newest first. Optional `userId` filters to one customer.',
+  })
+  @ApiQuery({ name: 'userId', required: false, description: 'Customer user UUID' })
+  @ApiOkResponse({ type: [AdminDepositTransactionResponseDto] })
+  listAdminTransactions(@Query('userId') userId?: string) {
+    return this.depositsService.listAdminTransactions({ userId });
   }
 
   @Post('admin/deposits/wallet/:userId/add')
@@ -104,5 +132,25 @@ export class DepositsController {
   @ApiResponse({ status: 404, description: 'User not found or not a customer.', type: ApiErrorResponseDto })
   addByAdmin(@Req() req: RequestWithUser, @Param('userId') userId: string, @Body() dto: AdminAdjustDepositDto) {
     return this.depositsService.adminAddToWallet(req.user.id, userId, dto);
+  }
+
+  @Post('admin/deposits/wallet/:userId/return')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Admin return deposit to customer',
+    description:
+      'Pays back held can-deposit (cash at counter). Target `userId` must be a **customer**. Amount cannot exceed outstanding held deposit. Writes ADMIN_DEBIT for audit.',
+  })
+  @ApiParam({ name: 'userId', description: 'Customer user UUID' })
+  @ApiOkResponse({ description: 'Customer held deposit after return.', type: WalletBalanceResponseDto })
+  @ApiResponse({ status: 400, description: 'No deposit held, or amount exceeds held balance.', type: ApiErrorResponseDto })
+  @ApiResponse({ status: 404, description: 'User not found or not a customer.', type: ApiErrorResponseDto })
+  returnByAdmin(
+    @Req() req: RequestWithUser,
+    @Param('userId') userId: string,
+    @Body() dto: AdminAdjustDepositDto,
+  ) {
+    return this.depositsService.adminReturnFromWallet(req.user.id, userId, dto);
   }
 }

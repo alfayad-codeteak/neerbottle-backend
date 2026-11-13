@@ -120,7 +120,14 @@ export class OrdersGateway implements OnGatewayConnection {
     }
   }
 
-  emitWalletUpdate(payload: { userId: string; balance: number }) {
+  emitWalletUpdate(payload: {
+    userId: string;
+    balance: number;
+    type?: string;
+    amount?: number;
+    note?: string;
+    transactionId?: string;
+  }) {
     if (!this.server || !payload.userId) return;
     this.server.to(`user:${payload.userId}`).emit('wallet.updated', payload);
     this.server.to(ADMIN_ROOM).emit('wallet.updated', payload);
